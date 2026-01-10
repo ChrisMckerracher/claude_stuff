@@ -1,8 +1,35 @@
 # Agent Ecosystem for Claude Code
 
-A productivity system for Claude Code built on specialized agents, merge tree workflows, and invisible task tracking via [beads](https://github.com/steveyegge/beads).
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Claude Code Plugin](https://img.shields.io/badge/Claude%20Code-Plugin-blue.svg)](https://claude.ai/code)
+[![Node.js 18+](https://img.shields.io/badge/Node.js-18%2B-green.svg)](https://nodejs.org/)
 
-> **This is a Claude Code Plugin** - Install it to add specialized agents, spelunking, and workflow automation to your Claude Code sessions.
+> **Orchestrate AI agents for software development.** Design, implement, review, and ship with 7 specialized agents that collaborate through merge tree workflows.
+
+A [Claude Code](https://claude.ai/code) plugin providing specialized agents, persistent codebase exploration, and invisible task tracking via [beads](https://github.com/steveyegge/beads).
+
+<details>
+<summary><strong>Table of Contents</strong></summary>
+
+- [Overview](#overview)
+- [Installation](#installation)
+- [Usage](#usage)
+  - [Commands](#commands)
+  - [Spelunk System](#spelunk-system)
+  - [Typical Workflow](#typical-workflow)
+- [Architecture](#architecture)
+  - [Authority Hierarchy](#authority-hierarchy)
+  - [Agent Responsibilities](#agent-responsibilities)
+  - [Merge Tree Concept](#merge-tree-concept)
+- [Plugin Structure](#plugin-structure)
+- [Hooks](#hooks)
+- [GitLab Integration](#gitlab-integration)
+- [Dashboard](#dashboard)
+- [Dependencies](#dependencies)
+- [Development](#development)
+- [License](#license)
+
+</details>
 
 ## Overview
 
@@ -16,6 +43,8 @@ This plugin provides:
 - **GitLab Integration** - Pull MR comments, push MRs, sync feedback
 - **Quality Gates** - Automatic security and code review hooks
 - **15 Commands** - Direct agent invocation and workflow management
+
+---
 
 ## Installation
 
@@ -55,11 +84,16 @@ Add to `~/.claude/settings.json`:
 ./scripts/test-ecosystem.sh
 ```
 
+---
+
 ## Usage
 
 ### Commands
 
 Commands invoke agents and workflows directly:
+
+<details>
+<summary><strong>View all commands</strong></summary>
 
 | Command | Purpose |
 |---------|---------|
@@ -78,6 +112,8 @@ Commands invoke agents and workflows directly:
 | `/gitlab-pull-comments` | Fetch MR feedback |
 | `/gitlab-push-mr` | Create/update MR |
 | `/update-claude` | Update CLAUDE.md with feedback |
+
+</details>
 
 ### Agent Examine Mode
 
@@ -160,6 +196,8 @@ The workflow includes 3 mandatory approval points where agents pause for human c
 - Silence is not approval - agents wait for explicit response
 - Human can always request changes or discussion at any gate
 
+---
+
 ## Architecture
 
 ### Authority Hierarchy
@@ -235,9 +273,14 @@ Features decompose into dependent tasks forming a tree:
 - Target: 500 lines per task (max 1000)
 - Beads tracks dependencies invisibly
 
+---
+
 ## Plugin Structure
 
-This is a valid Claude Code plugin. The structure:
+This is a valid Claude Code plugin.
+
+<details>
+<summary><strong>View full directory structure</strong></summary>
 
 ```
 plugin/                              # <- Plugin root
@@ -298,7 +341,12 @@ plugin/                              # <- Plugin root
     └── mr-description.md
 ```
 
+</details>
+
 When installed, spelunk documents are written to your project's `docs/spelunk/` directory:
+
+<details>
+<summary><strong>View spelunk output structure</strong></summary>
 
 ```
 your-project/
@@ -310,6 +358,10 @@ your-project/
     ├── interfaces/                  # Public interfaces
     └── trust-zones/                 # Security boundaries
 ```
+
+</details>
+
+---
 
 ## Hooks
 
@@ -331,6 +383,9 @@ Runs security checks before push:
 
 ### Enabling Hooks
 
+<details>
+<summary><strong>View settings.json configuration</strong></summary>
+
 Add to `~/.claude/settings.json`:
 
 ```json
@@ -350,7 +405,11 @@ Add to `~/.claude/settings.json`:
 }
 ```
 
+</details>
+
 See `hooks/README.md` for full configuration.
+
+---
 
 ## GitLab Integration
 
@@ -369,6 +428,8 @@ export GITLAB_HOST="https://gitlab.com"  # or your self-hosted instance
 /gitlab-push-mr              # Create MR for current branch
 /gitlab-push-mr --update     # Update existing MR description
 ```
+
+---
 
 ## Templates
 
@@ -389,6 +450,8 @@ Used by `/gitlab push-mr`:
 - Test Plan
 - Checklist
 
+---
+
 ## Dashboard
 
 The web dashboard provides task visualization and git diff viewing at `http://localhost:3847`.
@@ -406,6 +469,8 @@ The dashboard displays:
 
 The dashboard is built with Express/TypeScript and runs as a background process.
 
+---
+
 ## Dependencies
 
 - [beads](https://github.com/steveyegge/beads) - Git-backed task tracking for AI agents
@@ -413,6 +478,8 @@ The dashboard is built with Express/TypeScript and runs as a background process.
 - Node.js 18+ (required for dashboard and TypeScript tooling)
 - `jq` - JSON processing (for hooks)
 - `glab` (optional) - GitLab CLI for MR operations
+
+---
 
 ## Development
 
