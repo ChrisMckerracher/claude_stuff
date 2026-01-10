@@ -7,6 +7,54 @@ description: Use when creating tests from specs, or analyzing test coverage in a
 
 Invoke the QA Agent.
 
+<CRITICAL_BOUNDARY agent="qa">
+You are a DOCUMENTATION-LAYER agent. You synthesize test analysis from spelunk outputs.
+You do NOT explore source code directly (except test files).
+</CRITICAL_BOUNDARY>
+
+<ACTIVE_BOUNDARY agent="qa">
+BLOCKED_TOOLS:
+- Glob: src/**, lib/**, *.ts, *.py, *.js, *.go, *.rs, *.java (any source paths, EXCEPT test files)
+- Grep: ALL source file searches (EXCEPT test files)
+- Read: src/**, lib/**, *.ts, *.py, *.js, *.go, *.rs, *.java (any source paths, EXCEPT test files)
+
+ALLOWED_TOOLS:
+- Glob: docs/**, **/*.test.*, **/*.spec.*
+- Read: docs/**, README.md, CLAUDE.md, *.json (config only), **/*.test.*, **/*.spec.*
+
+TEST FILE EXCEPTION:
+QA Agent CAN directly read test files matching: **/*.test.*, **/*.spec.*, **/test_*.*, **/*_test.*
+This exception exists because QA needs to analyze existing test patterns and coverage.
+
+TOOL-CALL INTERCEPTION (MANDATORY):
+Before ANY Glob/Grep/Read call, check if path matches:
+  src/**, lib/**, *.ts, *.py, *.js, *.go, *.rs, *.java, or similar source patterns (non-test files)
+If YES → STOP and delegate to spelunker instead:
+  Task(subagent_type: "agent-ecosystem:coding", prompt: "/code spelunk --for=qa --focus='<area>'")
+
+Any source file reads (except tests) will produce INVALID analysis.
+</ACTIVE_BOUNDARY>
+
+## Default Behavior (No Subcommand or Free-Form Prompt)
+
+If invoked without a subcommand OR with a free-form exploration request:
+
+1. **Detect intent** from the prompt:
+   - Keywords `generate tests`, `write tests`, `test for`, `spec` → route to `/qa` workflow (test generation)
+   - Keywords `examine`, `analyze coverage`, `test patterns`, `what tests exist`, `coverage gaps` → route to `/qa examine` workflow
+
+2. **Route to the appropriate subcommand workflow** - do NOT attempt direct execution
+
+3. **Default fallback:** If intent unclear and codebase context is needed → `/qa examine`
+
+<ENFORCEMENT>
+**NEVER** attempt direct codebase exploration with Glob/Grep/Read on source files (except test files).
+**NEVER** use `Task(subagent_type: "Explore")` - documentation-layer agents must use spelunk.
+**ALWAYS** route through a subcommand workflow which enforces proper delegation.
+
+Source file access (except tests) is a boundary violation. Delegate immediately.
+</ENFORCEMENT>
+
 ## Usage
 
 `/qa` - Generate tests for current design/task
@@ -20,31 +68,34 @@ Invoke the QA Agent.
 3. Generates comprehensive test scenarios
 4. Writes tests following project patterns
 
-## Pre-Spelunk Documentation Check
+## Spelunk Delegation (Mandatory for Examine)
 
-Before requesting codebase exploration, ALWAYS check for existing docs:
+When `/qa examine` is invoked, follow this workflow exactly:
 
-### What QA Needs
-- **contracts/** - Interface definitions, input/output schemas, validation rules
-
-### Check Staleness First
 ```
-/code spelunk --check --for=qa --focus="<area>"
-```
+Step 1: Parse the focus area from user request
 
-Results:
-- **FRESH**: Read `docs/spelunk/contracts/<focus-slug>.md` directly
-- **STALE/MISSING**: Request spelunk via Coding Agent
+Step 2: DELEGATE immediately (unconditional):
+        Task(
+          subagent_type: "agent-ecosystem:coding",
+          prompt: "/code spelunk --for=qa --focus='<area>'"
+        )
 
-### Request Spelunk Only If Needed
-```
-Task(
-  subagent_type: "agent-ecosystem:code",
-  prompt: "spelunk --for=qa --focus='<area>'"
-)
+Step 3: WAIT for delegation to complete
+
+Step 4: Read from docs/spelunk/ (now within boundary)
+
+Step 5: Synthesize test analysis from spelunk output
 ```
 
-Then read: `docs/spelunk/contracts/<focus-slug>.md`
+**ENFORCEMENT:** Delegation is unconditional. Do not check for existing docs first. Do not attempt to Read source files (except test files). Delegate immediately.
+
+### Why Delegation Matters
+- **Saves tokens**: Avoid redundant exploration
+- **Faster**: Fresh docs are instantly available
+- **Consistent**: Same docs available across sessions
+- **Shareable**: Other agents can use your spelunked docs
+- **Right abstraction**: Spelunk docs are curated for contract analysis
 
 ### Using Contract Docs for Testing
 1. Extract interface definitions and type signatures

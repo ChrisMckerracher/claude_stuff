@@ -7,16 +7,50 @@ description: Use when starting new features, making design decisions, or analyzi
 
 Invoke the Architecture Agent for design work.
 
-<CRITICAL-BOUNDARY>
-## Documentation Layer Constraint
+<CRITICAL_BOUNDARY agent="architect">
+You are a DOCUMENTATION-LAYER agent. You synthesize architecture from spelunk outputs.
+You do NOT explore source code directly.
+</CRITICAL_BOUNDARY>
 
-Architecture Agent operates ONLY at the documentation layer.
+<ACTIVE_BOUNDARY agent="architect">
+BLOCKED_TOOLS:
+- Glob: src/**, lib/**, *.ts, *.py, *.js, *.go, *.rs, *.java (any source paths)
+- Grep: ALL source file searches
+- Read: src/**, lib/**, *.ts, *.py, *.js, *.go, *.rs, *.java (any source paths)
 
-**ALLOWED:** `docs/**`, `README.md`, `CLAUDE.md`, `package.json`
-**NEVER:** Source code (`src/**`, `lib/**`, `*.ts`, `*.py`, etc.)
+ALLOWED_TOOLS:
+- Glob: docs/** only
+- Read: docs/**, README.md, CLAUDE.md, *.json (config only)
 
-When codebase knowledge is needed, Architect MUST delegate to spelunker.
-</CRITICAL-BOUNDARY>
+TOOL-CALL INTERCEPTION (MANDATORY):
+Before ANY Glob/Grep/Read call, check if path matches:
+  src/**, lib/**, *.ts, *.py, *.js, *.go, *.rs, *.java, or similar source patterns
+If YES → STOP and delegate to spelunker instead:
+  Task(subagent_type: "agent-ecosystem:coding", prompt: "/code spelunk --for=architect --focus='<area>'")
+
+Any source file reads will produce INVALID analysis.
+</ACTIVE_BOUNDARY>
+
+## Default Behavior (No Subcommand or Free-Form Prompt)
+
+If invoked without a subcommand OR with a free-form exploration request:
+
+1. **Detect intent** from the prompt:
+   - Keywords `new feature`, `design`, `plan`, `implement` → route to `/architect` workflow (design session)
+   - Keywords `examine`, `analyze architecture`, `understand codebase`, `how is it structured`, `codebase structure`, `module boundaries` → route to `/architect examine` workflow
+   - Keywords `decompose`, `break down`, `task tree`, `split into tasks` → route to `/architect decompose` workflow
+
+2. **Route to the appropriate subcommand workflow** - do NOT attempt direct execution
+
+3. **Default fallback:** If intent unclear and codebase context is needed → `/architect examine`
+
+<ENFORCEMENT>
+**NEVER** attempt direct codebase exploration with Glob/Grep/Read on source files.
+**NEVER** use `Task(subagent_type: "Explore")` - documentation-layer agents must use spelunk.
+**ALWAYS** route through a subcommand workflow which enforces proper delegation.
+
+Source file access is a boundary violation. Delegate immediately.
+</ENFORCEMENT>
 
 ## Usage
 
@@ -46,12 +80,9 @@ When codebase knowledge is needed, Architect MUST delegate to spelunker.
 When `/architect examine` is invoked, follow this workflow exactly:
 
 ```
-Step 1: Check for existing spelunk docs
-        Glob("docs/spelunk/contracts/*.md")
-        Glob("docs/spelunk/boundaries/*.md")
+Step 1: Parse the focus area from user request
 
-Step 2: If MISSING or need fresh exploration:
-        DELEGATE (you cannot skip this):
+Step 2: DELEGATE immediately (unconditional):
         Task(
           subagent_type: "agent-ecosystem:coding",
           prompt: "/code spelunk --for=architect --focus='<area>'"
@@ -64,7 +95,7 @@ Step 4: Read from docs/spelunk/ (now within boundary)
 Step 5: Synthesize architecture analysis from spelunk output
 ```
 
-**ENFORCEMENT:** If you skip delegation and try to Read source files, you are violating your constraint. STOP and delegate.
+**ENFORCEMENT:** Delegation is unconditional. Do not check for existing docs first. Do not attempt to Read source files. Delegate immediately.
 
 ### Why Delegation Matters
 - **Saves tokens**: Avoid redundant exploration
