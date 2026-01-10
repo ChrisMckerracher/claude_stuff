@@ -77,6 +77,39 @@ install_beads() {
 check_prerequisites
 install_beads
 
-log_success "Foundation installed!"
+# Create plugin structure
+setup_plugin() {
+    log_info "Setting up plugin..."
+    PLUGIN_DIR="$HOME/.claude/plugins/local/agent-ecosystem"
+
+    # Run setup script if it exists in same directory
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if [ -f "$SCRIPT_DIR/setup-plugin.sh" ]; then
+        bash "$SCRIPT_DIR/setup-plugin.sh"
+    else
+        log_info "setup-plugin.sh not found, creating minimal structure..."
+        mkdir -p "$PLUGIN_DIR/.claude-plugin"
+        mkdir -p "$PLUGIN_DIR/agents"
+        mkdir -p "$PLUGIN_DIR/skills"
+        mkdir -p "$PLUGIN_DIR/hooks"
+        mkdir -p "$PLUGIN_DIR/templates"
+    fi
+
+    log_success "Plugin structure ready"
+}
+
+setup_plugin
+
+log_success "Agent Ecosystem installed!"
 echo ""
-echo "Next: Run ./scripts/setup-plugin.sh to create the plugin structure"
+echo "Quick start:"
+echo "  /architect    - Start design session"
+echo "  /visualize    - See task tree"
+echo "  /code         - Implement next task"
+echo "  /review       - Code review"
+echo "  /security     - Security audit"
+echo ""
+echo "To enable the plugin, add to ~/.claude/settings.json:"
+echo '  "enabledPlugins": {'
+echo '    "agent-ecosystem@local": true'
+echo '  }'
