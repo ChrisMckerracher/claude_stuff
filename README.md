@@ -145,6 +145,21 @@ This enables:
 9. Repeat 4-8 until done
 ```
 
+### Human Validation Gates
+
+The workflow includes 3 mandatory approval points where agents pause for human confirmation:
+
+| Gate | When | Agent Says |
+|------|------|------------|
+| **Design Review** | After architect writes design doc | "Design draft complete. Review and approve/revise/discuss." |
+| **Pre-Implementation** | After decompose creates task tree | "Task tree created. Want me to spawn N Coding Agents?" |
+| **Pre-Commit** | After implementation complete | "Ready to commit?" |
+
+**Rules:**
+- Agents never skip mandatory gates
+- Silence is not approval - agents wait for explicit response
+- Human can always request changes or discussion at any gate
+
 ## Architecture
 
 ### Authority Hierarchy
@@ -184,6 +199,24 @@ This enables:
 | | Execute | Review changes, can **block merge** |
 | **Security** | Examine | OWASP audit, secrets detection, CVE check |
 | | Execute | Audit changes, has **VETO power** |
+
+### Agent Layer Constraints
+
+Agents operate at different abstraction layers with different access rights:
+
+**Documentation-layer agents:** Architect, Product, QA
+- Read from `docs/`, `README.md`, config files
+- Cannot read source code directly (`src/**`, `lib/**`, `*.ts`, `*.py`)
+- Delegate to Coding Agent via spelunk when needing codebase info
+
+**Code-layer agents:** Coding, Security
+- Full access to source code
+- Write findings to `docs/spelunk/` for documentation-layer agents
+
+This separation ensures:
+- Correct abstraction level for each agent's role
+- Accumulated knowledge via spelunk docs
+- Efficient context usage (no raw code in design discussions)
 
 ### Merge Tree Concept
 
@@ -331,10 +364,10 @@ export GITLAB_HOST="https://gitlab.com"  # or your self-hosted instance
 ### Commands
 
 ```bash
-/gitlab pull-comments        # Fetch MR comments for current branch
-/gitlab pull-comments 123    # Fetch comments for MR #123
-/gitlab push-mr              # Create MR for current branch
-/gitlab push-mr update       # Update existing MR description
+/gitlab-pull-comments        # Fetch MR comments for current branch
+/gitlab-pull-comments 123    # Fetch comments for MR #123
+/gitlab-push-mr              # Create MR for current branch
+/gitlab-push-mr --update     # Update existing MR description
 ```
 
 ## Templates
@@ -356,10 +389,28 @@ Used by `/gitlab push-mr`:
 - Test Plan
 - Checklist
 
+## Dashboard
+
+The web dashboard provides task visualization and git diff viewing at `http://localhost:3847`.
+
+### Starting the Dashboard
+
+```bash
+/dashboard                   # Start dashboard (opens in browser)
+```
+
+The dashboard displays:
+- **Task Tree** - All beads tasks with status (ready/blocked/complete)
+- **Git Diff** - Changes against main branch
+- **Repository Status** - Branch info, uncommitted changes
+
+The dashboard is built with Express/TypeScript and runs as a background process.
+
 ## Dependencies
 
 - [beads](https://github.com/steveyegge/beads) - Git-backed task tracking for AI agents
 - [Claude Code](https://claude.ai/code) - Anthropic's CLI for Claude
+- Node.js 18+ (required for dashboard and TypeScript tooling)
 - `jq` - JSON processing (for hooks)
 - `glab` (optional) - GitLab CLI for MR operations
 
