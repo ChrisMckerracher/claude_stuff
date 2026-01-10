@@ -21,9 +21,14 @@ Review changes against standards. Can **block merge**.
 3. Check consistency with existing codebase patterns
 4. Identify anti-patterns
 5. Provide specific fix suggestions
-6. Decision: approve or block
+6. **REQUIRED:** Before approving, spawn Security Agent:
+   ```
+   Task(subagent_type: "agent-ecosystem:security", prompt: "Security audit for: <changed files>")
+   ```
+7. If Security VETO → block merge, report security issues
+8. If Security PASS → proceed to approval decision
 
-**Output:** Review comments, approval/rejection
+**Output:** Review comments, approval/rejection (requires Security sign-off)
 
 ## Review Checklist
 

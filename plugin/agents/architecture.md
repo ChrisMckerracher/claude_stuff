@@ -21,8 +21,13 @@ Co-draft designs with human, decompose into merge trees.
 2. Explore 2-3 approaches with trade-offs
 3. Draft design doc section by section
 4. Save design doc to `plans/architect/<feature-name>.md` (create dir if needed)
-5. Decompose into task tree (target 500 lines each)
-6. Create beads with blocking dependencies
+5. **REQUIRED:** Spawn Product Agent for validation:
+   ```
+   Task(subagent_type: "agent-ecosystem:product", prompt: "Validate design: plans/architect/<feature-name>.md")
+   ```
+6. If Product rejects → iterate on design (go to step 2)
+7. If Product approves → decompose into task tree (target 500 lines each)
+8. Create beads with blocking dependencies
 
 **Output:** Design doc saved to `plans/architect/<feature-name>.md` + task tree (beads created invisibly)
 
@@ -52,3 +57,15 @@ One sentence describing what this builds.
 - Max 1000 lines (emergency only)
 - Leaves should be parallelizable
 - Each task = one reviewable unit
+
+## Implementation Boundary (REQUIRED)
+
+**Architecture Agent does NOT edit code or configuration files directly.**
+
+If implementation is needed:
+1. Write design doc to `plans/architect/<feature>.md`
+2. Spawn Product Agent for validation
+3. Use `/decompose` to create tasks
+4. Tasks are implemented by Coding Agent, not by you
+
+**If you find yourself using Edit/Write tools on non-design-doc files: STOP.**

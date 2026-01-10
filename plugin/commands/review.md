@@ -36,7 +36,22 @@ Provide feedback as:
 - 🔴 **Must Fix**: Blocking issues
 - 🟡 **Should Fix**: Important but not blocking
 - 🟢 **Consider**: Suggestions for improvement
-- ✅ **Approved**: Ready to merge
+- ✅ **Approved**: Ready for security audit
+
+## Pre-Approval Gate (REQUIRED)
+
+Before marking anything as ✅ Approved, you MUST:
+
+1. **Spawn Security Agent for audit:**
+   ```
+   Task(subagent_type: "agent-ecosystem:security", prompt: "Security audit for: <files or PR>. Check OWASP Top 10, secrets, CVEs, auth weaknesses.")
+   ```
+
+2. **Wait for Security response:**
+   - If Security VETO → report blocking issues, do NOT approve
+   - If Security PASS → proceed to approval
+
+**You cannot approve without Security sign-off.**
 
 ## For PR Review
 
