@@ -48,16 +48,22 @@ install_beads() {
     # Try go install
     if ! command -v bd &> /dev/null && command -v go &> /dev/null; then
         log_info "Installing via go..."
-        go install github.com/steveyegge/beads/cmd/bd@latest
+        if ! go install github.com/steveyegge/beads/cmd/bd@latest 2>&1; then
+            log_info "go install failed, trying alternative methods..."
+        fi
     fi
 
     # Try direct download
     if ! command -v bd &> /dev/null; then
         log_info "Installing from GitHub releases..."
         INSTALL_SCRIPT=$(mktemp)
+        trap "rm -f '$INSTALL_SCRIPT'" EXIT
         curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh -o "$INSTALL_SCRIPT"
+        if [[ ! -s "$INSTALL_SCRIPT" ]]; then
+            log_error "Downloaded script is empty"
+            exit 1
+        fi
         bash "$INSTALL_SCRIPT"
-        rm -f "$INSTALL_SCRIPT"
     fi
 
     if command -v bd &> /dev/null; then
