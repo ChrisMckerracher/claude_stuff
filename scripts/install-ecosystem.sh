@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -40,7 +40,9 @@ install_beads() {
     # Try npm first (easiest)
     if command -v npm &> /dev/null; then
         log_info "Installing via npm..."
-        npm install -g @anthropic-ai/bd || true
+        if ! npm install -g @anthropic-ai/bd 2>&1; then
+            log_info "npm install failed, trying alternative methods..."
+        fi
     fi
 
     # Try go install
@@ -52,7 +54,10 @@ install_beads() {
     # Try direct download
     if ! command -v bd &> /dev/null; then
         log_info "Installing from GitHub releases..."
-        curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash
+        INSTALL_SCRIPT=$(mktemp)
+        curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh -o "$INSTALL_SCRIPT"
+        bash "$INSTALL_SCRIPT"
+        rm -f "$INSTALL_SCRIPT"
     fi
 
     if command -v bd &> /dev/null; then
