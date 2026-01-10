@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -e
 
+if [[ -z "$HOME" ]]; then
+    echo "Error: \$HOME is not set" >&2
+    exit 1
+fi
+
+trap 'echo "Error on line $LINENO"; exit 1' ERR
+
 PLUGIN_DIR="$HOME/.claude/plugins/local/agent-ecosystem"
 
 log_info() { echo -e "\033[0;34m==>\033[0m $1"; }
@@ -16,7 +23,10 @@ create_plugin_structure() {
     mkdir -p "$PLUGIN_DIR/templates"
 
     # Write plugin.json
-    cat > "$PLUGIN_DIR/.claude-plugin/plugin.json" << 'EOF'
+    if [[ -f "$PLUGIN_DIR/.claude-plugin/plugin.json" ]]; then
+        log_info "plugin.json already exists, skipping..."
+    else
+        cat > "$PLUGIN_DIR/.claude-plugin/plugin.json" << 'EOF'
 {
   "name": "agent-ecosystem",
   "description": "Specialized agents, merge tree workflows, and invisible task tracking",
@@ -27,6 +37,7 @@ create_plugin_structure() {
   "keywords": ["agents", "beads", "merge-tree", "tdd", "workflow"]
 }
 EOF
+    fi
 
     log_success "Plugin structure created"
 }
