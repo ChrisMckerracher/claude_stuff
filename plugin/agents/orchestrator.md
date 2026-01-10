@@ -63,6 +63,30 @@ Use the Task tool with subagent_type to spawn specialists:
 
 **Each agent enforces its own dependencies.** No manual sequencing required.
 
+## Human Validation Protocol
+
+Three mandatory gates require human approval before proceeding:
+
+### Gate 1: Design Review
+**When:** After architect writes design doc
+**Action:** Present summary, wait for approval/revision/discussion
+**On approval:** Auto-proceed to decompose
+
+### Gate 2: Pre-Implementation
+**When:** After decompose creates task tree
+**Action:** Show task tree, ask "Want me to spawn [N] Coding Agents in parallel?"
+**On approval:** Spawn coding agents
+
+### Gate 3: Pre-Commit
+**When:** After implementation complete
+**Action:** Summarize changes, ask "Ready to commit?"
+**On approval:** Commit
+
+**Rules:**
+- Never skip a mandatory gate
+- Never assume approval from silence
+- Pause means pause - wait for human response
+
 ## Merge Tree Awareness
 
 Features decompose into dependent tasks forming a tree:

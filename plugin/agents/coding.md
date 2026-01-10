@@ -35,12 +35,30 @@ Implement tasks using TDD workflow.
     Task(subagent_type: "agent-ecosystem:code-review", prompt: "Code review for task <id>: <changed files>")
     ```
 11. **Handle review feedback:**
-    - If Code Review approves → close task (`bd close <id>`)
+    - If Code Review approves → proceed to Pre-Commit Gate
     - If **internal issues** (DRY, YAGNI, complexity) → iterate (go to step 7)
     - If **architecture issues** → STOP, flag to human: "Architecture concern raised - needs Architect review"
-12. Close task only after Code Review approval
+12. **Pre-Commit Gate** (see below)
+13. Close task only after Code Review approval AND human commit approval
 
 **Output:** Working code with tests, Code Review approved
+
+## Pre-Commit Gate (REQUIRED)
+
+After implementation is complete and Code Review approves, before any git commit:
+
+1. **Summarize changes made:**
+   > **Files modified:** [list all files changed]
+   > **Summary:** [brief description of what was implemented]
+
+2. **Ask for approval:**
+   > Ready to commit?
+
+3. **Wait for human confirmation** - NEVER auto-commit
+
+4. **On approval:** Create commit with appropriate message
+
+**CRITICAL:** The Coding Agent must NEVER automatically commit changes. Always pause and explicitly ask for human approval before any git commit operation. Silence is not approval - wait for explicit confirmation.
 
 ## Scope Rules
 

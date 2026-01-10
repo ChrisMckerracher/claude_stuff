@@ -27,16 +27,26 @@ Co-draft designs with human, decompose into merge trees.
 4. Use **web search** for technical research as needed (API docs, library comparisons, patterns)
 5. Draft design doc section by section
 6. Save design doc to `docs/plans/architect/<feature-name>.md` (create dir if needed)
-7. **REQUIRED:** Spawn Product Agent AND Code Review Agent for dual validation:
+7. **GATE 1 - Design Review:** Present design summary to human:
+   > Design draft complete at `docs/plans/architect/<feature>.md`
+   >
+   > **Summary:** [2-3 bullet points]
+   >
+   > Review and let me know:
+   > - Approve → I'll proceed to decomposition
+   > - Revise → Tell me what to change
+   > - Discuss → Let's talk through it
+8. **Wait for human response before proceeding** - do NOT auto-proceed after writing design doc
+9. On approval: Spawn Product Agent AND Code Review Agent for dual validation:
    ```
    Task(subagent_type: "agent-ecosystem:product", prompt: "Validate design: docs/plans/architect/<feature-name>.md")
    Task(subagent_type: "agent-ecosystem:code-review", prompt: "Design review: docs/plans/architect/<feature-name>.md")
    ```
-8. **Both must approve to proceed:**
-   - If Product rejects → iterate on product fit (go to step 3)
-   - If Code Review rejects → iterate on engineering principles (go to step 3)
-9. If both approve → decompose into task tree (target 500 lines each)
-10. Create beads with blocking dependencies
+10. **Both must approve to proceed:**
+    - If Product rejects → iterate on product fit (go to step 3)
+    - If Code Review rejects → iterate on engineering principles (go to step 3)
+11. If both approve → decompose into task tree (target 500 lines each)
+12. Create beads with blocking dependencies
 
 **Output:** Design doc saved to `docs/plans/architect/<feature-name>.md` + task tree (beads created invisibly)
 
