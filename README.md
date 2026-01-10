@@ -2,16 +2,20 @@
 
 A productivity system for Claude Code built on specialized agents, merge tree workflows, and invisible task tracking via [beads](https://github.com/steveyegge/beads).
 
+> **This is a Claude Code Plugin** - Install it to add specialized agents, spelunking, and workflow automation to your Claude Code sessions.
+
 ## Overview
 
 This plugin provides:
 
-- **6 Specialist Agents** - Architecture, Product, Coding, QA, Code Review, Security
-- **Orchestrator** - Routes requests to appropriate agents based on authority hierarchy
+- **7 Specialist Agents** - Orchestrator, Architecture, Product, Coding, QA, Code Review, Security
+- **Spelunk System** - Persistent codebase exploration with hash-based cache validation
+- **Dashboard** - Web UI for visualizing tasks and git diffs (localhost:3847)
 - **Merge Tree Workflows** - Decompose features into dependent tasks, track progress
 - **Invisible Task Tracking** - Beads infrastructure hidden from user (you see "tasks", not `bd` commands)
 - **GitLab Integration** - Pull MR comments, push MRs, sync feedback
 - **Quality Gates** - Automatic security and code review hooks
+- **15 Commands** - Direct agent invocation and workflow management
 
 ## Installation
 
@@ -28,7 +32,7 @@ cd claude_stuff
 
 This will:
 1. Install [beads](https://github.com/steveyegge/beads) (`bd` CLI)
-2. Create the plugin structure at `~/.claude/plugins/local/agent-ecosystem/`
+2. Create symlink at `~/.claude/plugins/local/agent-ecosystem/` → `./plugin/`
 
 ### Enable the Plugin
 
@@ -36,6 +40,9 @@ Add to `~/.claude/settings.json`:
 
 ```json
 {
+  "permissions": {
+    "allow": ["Bash(npm:*)", "Bash(npx:*)", "Bash(bd:*)"]
+  },
   "enabledPlugins": {
     "agent-ecosystem@local": true
   }
@@ -50,28 +57,79 @@ Add to `~/.claude/settings.json`:
 
 ## Usage
 
-### Skills (Commands)
+### Commands
 
-| Skill | Purpose |
-|-------|---------|
+Commands invoke agents and workflows directly:
+
+| Command | Purpose |
+|---------|---------|
+| `/orchestrator` | Route requests to appropriate agents |
 | `/architect` | Start design session, analyze architecture |
-| `/architect examine` | Analyze codebase structure |
-| `/architect decompose` | Break design into task tree |
 | `/product` | Validate design matches product goals |
-| `/product examine` | Understand what problem codebase solves |
 | `/code` | Implement next ready task (TDD) |
-| `/code examine` | Analyze code relationships |
 | `/qa` | Generate tests from specs |
-| `/qa examine` | Analyze test coverage |
 | `/review` | Code review for style/quality |
 | `/security` | Security audit (OWASP, secrets, CVEs) |
 | `/decompose` | Break feature into merge tree |
 | `/visualize` | Show task tree with progress |
 | `/merge-up` | Merge completed children to parent |
 | `/rebalance` | Split large tasks, consolidate small ones |
-| `/gitlab pull-comments` | Fetch MR feedback |
-| `/gitlab push-mr` | Create/update MR |
+| `/dashboard` | Open web UI at localhost:3847 |
+| `/gitlab-pull-comments` | Fetch MR feedback |
+| `/gitlab-push-mr` | Create/update MR |
 | `/update-claude` | Update CLAUDE.md with feedback |
+
+### Agent Examine Mode
+
+Most agents support an `examine` mode for exploring the codebase without taking action:
+
+| Command | Purpose |
+|---------|---------|
+| `/architect examine` | Analyze codebase structure |
+| `/product examine` | Understand what problem codebase solves |
+| `/code examine` | Analyze code relationships |
+| `/qa examine` | Analyze test coverage |
+
+### Spelunk System
+
+The spelunk system enables persistent codebase exploration that survives across sessions and can be shared between agents.
+
+**Key Features:**
+- **Lens-based exploration** - Focus on specific aspects: `interfaces`, `flows`, `boundaries`, `contracts`, `trust-zones`
+- **Hash-based cache validation** - Documents are validated against SHA-256 hashes of source files
+- **Automatic staleness detection** - Know instantly if a spelunk doc is FRESH, STALE, MISSING, or ORPHANED
+
+**How Hash Validation Works:**
+
+When a spelunk document is generated, each analyzed source file gets an 8-character SHA-256 hash stored in `docs/spelunk/_staleness.json`:
+
+```json
+{
+  "version": 1,
+  "docs": {
+    "contracts/authentication-layer.md": {
+      "generated": "2024-01-15T10:30:00Z",
+      "source_files": {
+        "src/auth/handler.ts": "a1b2c3d4",
+        "src/auth/types.ts": "e5f6g7h8"
+      }
+    }
+  }
+}
+```
+
+When an agent needs codebase knowledge:
+1. Check if a spelunk doc exists for the lens+focus
+2. Recompute current file hashes
+3. Compare against stored hashes
+4. **FRESH**: All hashes match → reuse the document (saves tokens)
+5. **STALE**: Hash mismatch → regenerate only stale sections
+
+This enables:
+- Cross-session knowledge persistence
+- Multi-agent sharing of exploration results
+- Automatic invalidation when code changes
+- Significant token savings on large codebases
 
 ### Typical Workflow
 
@@ -112,9 +170,11 @@ Add to `~/.claude/settings.json`:
 
 | Agent | Mode | Responsibility |
 |-------|------|----------------|
+| **Orchestrator** | Route | Routes requests to appropriate agents |
+| | Status | Shows ready tasks, progress, blockers |
 | **Architecture** | Examine | Analyze codebase structure, patterns, boundaries |
 | | Execute | Co-draft designs, decompose into merge trees |
-| **Product** | Examine | Understand what problem codebase solves (ignores code quality) |
+| **Product** | Examine | Understand what problem codebase solves (uses spelunk) |
 | | Execute | Validate designs match product expectations |
 | **Coding** | Examine | Map code relationships, find relevant code |
 | | Execute | Implement tasks using TDD workflow |
@@ -144,11 +204,13 @@ Features decompose into dependent tasks forming a tree:
 
 ## Plugin Structure
 
+This is a valid Claude Code plugin. The structure:
+
 ```
-~/.claude/plugins/local/agent-ecosystem/
+plugin/                              # <- Plugin root
 ├── .claude-plugin/
-│   └── plugin.json
-├── agents/
+│   └── plugin.json                  # Plugin metadata and hooks
+├── agents/                          # Agent system prompts
 │   ├── orchestrator.md
 │   ├── architecture.md
 │   ├── product.md
@@ -156,21 +218,44 @@ Features decompose into dependent tasks forming a tree:
 │   ├── qa.md
 │   ├── code-review.md
 │   └── security.md
-├── skills/
+├── commands/                        # Slash commands (15 total)
+│   ├── orchestrator.md
+│   ├── architect.md
+│   ├── product.md
+│   ├── code.md
+│   ├── qa.md
+│   ├── review.md
+│   ├── security.md
+│   ├── decompose.md
+│   ├── visualize.md
+│   ├── merge-up.md
+│   ├── rebalance.md
+│   ├── dashboard.md
+│   ├── gitlab-pull-comments.md
+│   ├── gitlab-push-mr.md
+│   └── update-claude.md
+├── skills/                          # Skills (14 total)
 │   ├── architect/SKILL.md
 │   ├── product/SKILL.md
 │   ├── code/SKILL.md
 │   ├── qa/SKILL.md
 │   ├── review/SKILL.md
 │   ├── security/SKILL.md
+│   ├── spelunk/SKILL.md             # Codebase exploration
 │   ├── decompose/SKILL.md
 │   ├── visualize/SKILL.md
 │   ├── merge-up/SKILL.md
 │   ├── rebalance/SKILL.md
-│   ├── gitlab/
-│   │   ├── pull-comments/SKILL.md
-│   │   └── push-mr/SKILL.md
+│   ├── gitlab-pull-comments/SKILL.md
+│   ├── gitlab-push-mr/SKILL.md
 │   └── update-claude/SKILL.md
+├── lib/                             # TypeScript utilities
+│   └── spelunk/                     # Spelunk implementation
+│       ├── persistence.ts           # Write docs, hash computation
+│       ├── staleness-check.ts       # FRESH/STALE/MISSING/ORPHANED
+│       ├── orchestrator.ts          # Coordination logic
+│       ├── types.ts                 # Type definitions
+│       └── *.test.ts                # Test coverage
 ├── hooks/
 │   ├── session-start.sh
 │   ├── pre-push-security.sh
@@ -178,6 +263,19 @@ Features decompose into dependent tasks forming a tree:
 └── templates/
     ├── design-doc.md
     └── mr-description.md
+```
+
+When installed, spelunk documents are written to your project's `docs/spelunk/` directory:
+
+```
+your-project/
+└── docs/spelunk/
+    ├── _staleness.json              # Hash validation index
+    ├── contracts/                   # API contracts, interfaces
+    ├── flows/                       # Data and control flows
+    ├── boundaries/                  # Module boundaries
+    ├── interfaces/                  # Public interfaces
+    └── trust-zones/                 # Security boundaries
 ```
 
 ## Hooks

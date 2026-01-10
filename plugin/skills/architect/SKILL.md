@@ -7,6 +7,17 @@ description: Use when starting new features, making design decisions, or analyzi
 
 Invoke the Architecture Agent for design work.
 
+<CRITICAL-BOUNDARY>
+## Documentation Layer Constraint
+
+Architecture Agent operates ONLY at the documentation layer.
+
+**ALLOWED:** `docs/**`, `README.md`, `CLAUDE.md`, `package.json`
+**NEVER:** Source code (`src/**`, `lib/**`, `*.ts`, `*.py`, etc.)
+
+When codebase knowledge is needed, Architect MUST delegate to spelunker.
+</CRITICAL-BOUNDARY>
+
 ## Usage
 
 `/architect` - Start design session for new feature
@@ -21,7 +32,7 @@ Invoke the Architecture Agent for design work.
    - If no brief + user-facing feature: suggests running `/product` first
    - If no brief + technical work: proceeds with note in design doc
 3. For new features: iterative co-design with you
-4. For examine: produces architecture analysis
+4. For examine: **delegates to spelunker**, then produces architecture analysis
 5. For decompose: creates merge tree of tasks
 
 ## Capabilities
@@ -30,57 +41,37 @@ Invoke the Architecture Agent for design work.
 - **Web search:** Technical research for API docs, library comparisons, implementation patterns
 - **Design docs:** Outputs to `docs/plans/architect/<feature-name>.md`
 
-## Pre-Spelunk Documentation Check
+## Spelunk Delegation (Mandatory for Examine)
 
-Before requesting a spelunk from the Coding Agent, ALWAYS check for existing documentation:
+When `/architect examine` is invoked, follow this workflow exactly:
 
-### Step 1: Determine What You Need
-Architect typically needs:
-- **contracts/** - Interface and type definitions
-- **boundaries/** - Module boundaries and dependencies
-
-### Step 2: Check for Existing Docs
-Convert your focus area to a slug and check if docs exist:
 ```
-focus: "authentication layer"
-slug: authentication-layer
-paths to check:
-  - docs/spelunk/contracts/authentication-layer.md
-  - docs/spelunk/boundaries/authentication-layer.md
-```
+Step 1: Check for existing spelunk docs
+        Glob("docs/spelunk/contracts/*.md")
+        Glob("docs/spelunk/boundaries/*.md")
 
-### Step 3: Check Staleness
-Use the spelunk --check flag:
-```
-/code spelunk --check --for=architect --focus="authentication layer"
+Step 2: If MISSING or need fresh exploration:
+        DELEGATE (you cannot skip this):
+        Task(
+          subagent_type: "agent-ecosystem:coding",
+          prompt: "/code spelunk --for=architect --focus='<area>'"
+        )
+
+Step 3: WAIT for delegation to complete
+
+Step 4: Read from docs/spelunk/ (now within boundary)
+
+Step 5: Synthesize architecture analysis from spelunk output
 ```
 
-Possible results:
-- **FRESH**: Read the doc directly, no spelunk needed
-- **STALE**: Request re-spelunk with --refresh flag
-- **MISSING**: Request new spelunk
+**ENFORCEMENT:** If you skip delegation and try to Read source files, you are violating your constraint. STOP and delegate.
 
-### Step 4: Request Spelunk Only If Needed
-```
-# Only if STALE or MISSING:
-Task(
-  subagent_type: "agent-ecosystem:code",
-  prompt: "/code spelunk --for=architect --focus='authentication layer'"
-)
-```
-
-### Step 5: Read Results
-After spelunk completes (or if already fresh):
-```
-Read docs/spelunk/contracts/authentication-layer.md
-Read docs/spelunk/boundaries/authentication-layer.md
-```
-
-### Why This Matters
+### Why Delegation Matters
 - **Saves tokens**: Avoid redundant exploration
 - **Faster**: Fresh docs are instantly available
 - **Consistent**: Same docs available across sessions
 - **Shareable**: Other agents can use your spelunked docs
+- **Right abstraction**: Spelunk docs are curated for architectural decisions
 
 ## Authority
 
