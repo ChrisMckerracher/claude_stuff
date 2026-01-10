@@ -13,6 +13,50 @@ Understand code relationships and patterns.
 
 **Output:** Code relationship map, pattern analysis
 
+### Spelunk Mode
+Targeted codebase exploration at specific granularity levels for other agents.
+
+**When to use:** Other agents (Architect, Product, QA, Security) delegate spelunking to you when they need focused codebase understanding without implementation details.
+
+**Command syntax:**
+```
+spelunk --for=<agent> --focus="<area>"
+spelunk --lens=<lens1>,<lens2> --focus="<area>"
+spelunk --check --for=<agent> --focus="<area>"
+```
+
+**Options:**
+| Option | Description |
+|--------|-------------|
+| `--for=<agent>` | Use agent's default lenses (architect, product, qa, security) |
+| `--lens=<name>` | Specific lens(es): interfaces, flows, boundaries, contracts, trust-zones |
+| `--focus="<area>"` | The codebase area to explore (required) |
+| `--check` | Check staleness only, don't regenerate |
+| `--refresh` | Force regeneration even if docs are fresh |
+| `--max-files=N` | Limit files examined (default: 50) |
+| `--max-depth=N` | Limit directory depth (default: 3) |
+
+**Lens-to-Agent mapping:**
+| Agent | Default Lenses |
+|-------|---------------|
+| architect | interfaces, boundaries |
+| product | flows |
+| qa | contracts |
+| security | trust-zones, contracts |
+
+**Tool strategy:** LSP (fastest) → AST (ast-grep/semgrep) → Grep (fallback)
+
+**Output:** Written to `docs/spelunk/{lens}/{focus-slug}.md` with staleness tracking.
+
+**Workflow:**
+1. Parse command with `parseSpelunkArgs()`
+2. Check staleness - if FRESH, return existing doc path
+3. Detect available tools (LSP, AST, grep)
+4. Execute lens with appropriate executor
+5. Generate report with frontmatter and hashes
+6. Update `_staleness.json` and `_index.md`
+7. Return path to generated doc
+
 ### Execute Mode
 Implement tasks using TDD workflow.
 

@@ -129,6 +129,55 @@ Use `WebSearch` tool for on-demand market research:
 - [ ] User value is clear
 - [ ] Success criteria defined
 
+## Pre-Spelunk Documentation Check
+
+Before requesting a spelunk from the Coding Agent, ALWAYS check for existing documentation:
+
+### Step 1: Determine What You Need
+Product Agent typically needs:
+- **flows/** - User flows, entry points, handler chains
+
+### Step 2: Check for Existing Docs
+Convert your focus area to a slug and check if docs exist:
+```
+focus: "user registration"
+slug: user-registration
+path to check: docs/spelunk/flows/user-registration.md
+```
+
+### Step 3: Check Staleness
+Use the spelunk --check flag:
+```
+/code spelunk --check --for=product --focus="user registration"
+```
+
+Possible results:
+- **FRESH**: Read the doc directly, no spelunk needed
+- **STALE**: Request re-spelunk with --refresh flag
+- **MISSING**: Request new spelunk
+
+### Step 4: Request Spelunk Only If Needed
+```
+# Only if STALE or MISSING:
+Task(
+  subagent_type: "agent-ecosystem:code",
+  prompt: "/code spelunk --for=product --focus='user registration'"
+)
+```
+
+### Step 5: Read Results
+After spelunk completes (or if already fresh):
+```
+Read docs/spelunk/flows/user-registration.md
+```
+
+### Using Flow Documentation
+When validating designs against implementation:
+1. Check spelunk docs for the relevant flow
+2. Compare documented entry points and handlers to design intent
+3. Flag any mismatches between design and actual implementation
+4. Note if flows are missing expected components
+
 ## Authority
 
 Peer level. Participates in consensus. Validates after Architecture but before implementation.
