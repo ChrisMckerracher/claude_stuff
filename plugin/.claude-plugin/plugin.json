@@ -1,0 +1,22 @@
+{
+  "name": "agent-ecosystem",
+  "description": "Specialized agents, merge tree workflows, and invisible task tracking",
+  "version": "0.1.0",
+  "author": {
+    "name": "chrismck"
+  },
+  "keywords": ["agents", "beads", "merge-tree", "tdd", "workflow"],
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/session-start.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

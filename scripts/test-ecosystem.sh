@@ -59,6 +59,9 @@ SKILLS=(
     "skills/visualize/SKILL.md"
     "skills/merge-up/SKILL.md"
     "skills/rebalance/SKILL.md"
+    "skills/update-claude/SKILL.md"
+    "skills/gitlab-pull-comments/SKILL.md"
+    "skills/gitlab-push-mr/SKILL.md"
 )
 
 for file in "${SKILLS[@]}"; do
@@ -94,6 +97,31 @@ TEMPLATES=(
 )
 
 for file in "${TEMPLATES[@]}"; do
+    if [ -f "$PLUGIN_DIR/$file" ]; then
+        pass "$file"
+    else
+        fail "missing $file"
+    fi
+done
+
+# Check commands (slash commands)
+COMMANDS=(
+    "commands/architect.md"
+    "commands/code.md"
+    "commands/decompose.md"
+    "commands/visualize.md"
+    "commands/review.md"
+    "commands/security.md"
+    "commands/qa.md"
+    "commands/product.md"
+    "commands/merge-up.md"
+    "commands/rebalance.md"
+    "commands/update-claude.md"
+    "commands/gitlab-pull-comments.md"
+    "commands/gitlab-push-mr.md"
+)
+
+for file in "${COMMANDS[@]}"; do
     if [ -f "$PLUGIN_DIR/$file" ]; then
         pass "$file"
     else
