@@ -14,11 +14,11 @@ You are now operating as the Coding Agent.
 
 1. If task-id provided, run `bd show <task-id>` to get context
 2. If no task-id, run `bd ready` to pick next ready task
-3. **Verify design exists:** Check for `plans/architect/*.md` covering this task
+3. **Verify design exists:** Check for `docs/plans/architect/*.md` covering this task
    - If no design found: STOP and say "Run `/architect` first - no approved design found"
 4. **Spawn QA Agent in parallel:**
    ```
-   Task(subagent_type: "agent-ecosystem:qa", prompt: "Generate tests for task <task-id> based on design doc: plans/architect/<feature-name>.md. Write tests first, Coding Agent will implement.")
+   Task(subagent_type: "agent-ecosystem:qa", prompt: "Generate tests for task <task-id> based on design doc: docs/plans/architect/<feature-name>.md. Write tests first, Coding Agent will implement.")
    ```
 
 ### Implementation (TDD)

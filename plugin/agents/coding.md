@@ -17,7 +17,7 @@ Understand code relationships and patterns.
 Implement tasks using TDD workflow.
 
 **Process:**
-1. Read design doc from `plans/architect/<feature-name>.md`
+1. Read design doc from `docs/plans/architect/<feature-name>.md`
    - If no design found: STOP and say "Run `/architect` first"
 2. Check task is unblocked (`bd ready`)
 3. Claim task (`bd update <id> --status in_progress`)
