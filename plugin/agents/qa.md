@@ -17,7 +17,7 @@ Analyze existing test coverage and patterns.
 Generate tests from specs/design docs.
 
 **Process:**
-1. Read design doc / spec
+1. Read design doc from `plans/architect/<feature-name>.md`
 2. Identify test scenarios:
    - Happy paths
    - Edge cases

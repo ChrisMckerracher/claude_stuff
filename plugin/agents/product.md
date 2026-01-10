@@ -17,7 +17,7 @@ Understand what problem a codebase solves. **Ignore code quality entirely.**
 Validate designs match product expectations.
 
 **Process:**
-1. Review design doc
+1. Review design doc from `plans/architect/<feature-name>.md`
 2. Check: Does this solve the stated problem?
 3. Check: Does scope match user value?
 4. Flag scope creep

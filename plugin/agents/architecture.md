@@ -20,10 +20,13 @@ Co-draft designs with human, decompose into merge trees.
 1. Clarify requirements with human (iterative)
 2. Explore 2-3 approaches with trade-offs
 3. Draft design doc section by section
-4. Decompose into task tree (target 500 lines each)
-5. Create beads with blocking dependencies
+4. Save design doc to `plans/architect/<feature-name>.md` (create dir if needed)
+5. Decompose into task tree (target 500 lines each)
+6. Create beads with blocking dependencies
 
-**Output:** Design doc + task tree (beads created invisibly)
+**Output:** Design doc saved to `plans/architect/<feature-name>.md` + task tree (beads created invisibly)
+
+**File Naming:** Use kebab-case feature name (e.g., `plans/architect/user-authentication.md`)
 
 ## Design Doc Template
 

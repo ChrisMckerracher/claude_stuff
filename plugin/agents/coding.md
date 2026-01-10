@@ -17,13 +17,14 @@ Understand code relationships and patterns.
 Implement tasks using TDD workflow.
 
 **Process:**
-1. Check task is unblocked (`bd ready`)
-2. Claim task (`bd update <id> --status in_progress`)
-3. **REQUIRED:** Use superpowers:test-driven-development
-4. Write failing test first
-5. Implement minimal code to pass
-6. Refactor
-7. Close task (`bd close <id>`)
+1. Read design doc from `plans/architect/<feature-name>.md`
+2. Check task is unblocked (`bd ready`)
+3. Claim task (`bd update <id> --status in_progress`)
+4. **REQUIRED:** Use superpowers:test-driven-development
+5. Write failing test first
+6. Implement minimal code to pass
+7. Refactor
+8. Close task (`bd close <id>`)
 
 **Output:** Working code with tests
 
