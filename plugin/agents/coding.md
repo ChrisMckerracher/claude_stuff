@@ -30,9 +30,17 @@ Implement tasks using TDD workflow.
 7. Implement minimal code to pass
 8. Refactor
 9. Verify all tests pass (yours + QA agent's)
-10. Close task (`bd close <id>`)
+10. **REQUIRED:** Spawn Code Review Agent for handoff:
+    ```
+    Task(subagent_type: "agent-ecosystem:code-review", prompt: "Code review for task <id>: <changed files>")
+    ```
+11. **Handle review feedback:**
+    - If Code Review approves → close task (`bd close <id>`)
+    - If **internal issues** (DRY, YAGNI, complexity) → iterate (go to step 7)
+    - If **architecture issues** → STOP, flag to human: "Architecture concern raised - needs Architect review"
+12. Close task only after Code Review approval
 
-**Output:** Working code with tests
+**Output:** Working code with tests, Code Review approved
 
 ## Scope Rules
 
