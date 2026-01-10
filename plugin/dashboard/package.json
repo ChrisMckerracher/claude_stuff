@@ -1,0 +1,16 @@
+{
+  "name": "agent-dashboard",
+  "version": "1.0.0",
+  "description": "Local dashboard for beads tasks and git diffs",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node public/app.test.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "jsdom": "^27.4.0"
+  }
+}

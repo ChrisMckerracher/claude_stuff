@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agent Dashboard</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/diff2html/bundles/css/diff2html.min.css">
+</head>
+<body>
+  <header>
+    <div class="repo-info">
+      <span id="repo-name">Loading...</span>
+      <span id="branch-info"></span>
+    </div>
+    <div class="controls">
+      <label><input type="checkbox" id="auto-refresh"> Auto-refresh</label>
+      <button onclick="refresh()">Refresh</button>
+    </div>
+  </header>
+
+  <main>
+    <aside class="task-panel">
+      <div class="panel-header">
+        <h2>Tasks</h2>
+        <div class="view-toggle">
+          <button class="active" data-view="tree">Tree</button>
+          <button data-view="list">List</button>
+        </div>
+      </div>
+      <div class="filter-bar">
+        <select id="status-filter">
+          <option value="all">All</option>
+          <option value="open">Open</option>
+          <option value="in_progress">In Progress</option>
+          <option value="closed">Closed</option>
+        </select>
+      </div>
+      <div id="task-container"></div>
+      <div class="task-summary" id="task-summary"></div>
+    </aside>
+
+    <section class="diff-panel">
+      <div class="panel-header">
+        <h2>Diff: <span id="diff-info">Loading...</span></h2>
+        <div class="file-tabs" id="file-tabs"></div>
+      </div>
+      <div id="diff-container"></div>
+    </section>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/diff2html/bundles/js/diff2html.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
