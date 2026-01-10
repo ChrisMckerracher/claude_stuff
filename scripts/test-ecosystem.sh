@@ -119,6 +119,7 @@ COMMANDS=(
     "commands/update-claude.md"
     "commands/gitlab-pull-comments.md"
     "commands/gitlab-push-mr.md"
+    "commands/orchestrator.md"
 )
 
 for file in "${COMMANDS[@]}"; do
