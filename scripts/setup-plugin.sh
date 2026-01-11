@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# =============================================================================
+# DEVELOPMENT/CONTRIBUTING ONLY
+# For primary installation, use: /plugin install https://github.com/ChrisMckerracher/claude_stuff
+# This script is for local development or contributing to the plugin.
+# =============================================================================
 set -e
 
 if [[ -z "$HOME" ]]; then
