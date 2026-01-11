@@ -48,30 +48,11 @@ This plugin provides:
 
 ## Installation
 
-### Quick Install (Recommended)
-
-In Claude Code, run:
-
 ```bash
 /plugin install https://github.com/ChrisMckerracher/claude_stuff
 ```
 
-### Alternative: Marketplace Install
-
-```bash
-/plugin marketplace add ChrisMckerracher/claude_stuff
-/plugin install agent-ecosystem@agent-ecosystem-marketplace
-```
-
-### Verify
-
-```bash
-/help  # Should show agent-ecosystem commands
-```
-
-### Dependencies
-
-The [beads](https://github.com/steveyegge/beads) CLI is required for task tracking:
+Requires [beads](https://github.com/steveyegge/beads) for task tracking:
 
 ```bash
 go install github.com/steveyegge/beads/cmd/bd@latest
@@ -486,8 +467,6 @@ The dashboard is built with Express/TypeScript and runs as a background process.
 
 | Script | Purpose |
 |--------|---------|
-| `install-ecosystem.sh` | Full installation (beads + plugin) |
-| `setup-plugin.sh` | Create plugin structure only |
 | `test-ecosystem.sh` | Verify installation |
 
 ## License

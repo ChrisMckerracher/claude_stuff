@@ -16,6 +16,15 @@
         "plugin/skills/spelunk/SKILL.md": "k7l8m9n0",
         "beads/README.md": "o1p2q3r4"
       }
+    },
+    "boundaries/scripts-analysis.md": {
+      "generated": "2026-01-10T19:30:00Z",
+      "source_files": {
+        "scripts/cleanup-plugin.sh": "29207c7a",
+        "scripts/install-ecosystem.sh": "3b3c1d8a",
+        "scripts/setup-plugin.sh": "6c194ff4",
+        "scripts/test-ecosystem.sh": "162c1bed"
+      }
     }
   }
 }
