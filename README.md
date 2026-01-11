@@ -49,7 +49,8 @@ This plugin provides:
 ## Installation
 
 ```bash
-/plugin install https://github.com/ChrisMckerracher/claude_stuff
+/plugin marketplace add https://github.com/ChrisMckerracher/claude_stuff
+/plugin install agent-ecosystem
 ```
 
 Requires [beads](https://github.com/steveyegge/beads) for task tracking:
