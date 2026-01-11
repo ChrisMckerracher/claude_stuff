@@ -48,7 +48,27 @@ This plugin provides:
 
 ## Installation
 
-### Quick Install
+### Quick Install (Recommended)
+
+In Claude Code, run:
+
+```bash
+/plugin install https://github.com/ChrisMckerracher/claude_stuff
+```
+
+### Marketplace Install
+
+```bash
+# Add the marketplace
+/plugin marketplace add ChrisMckerracher/claude_stuff
+
+# Install the plugin
+/plugin install agent-ecosystem@agent-ecosystem-marketplace
+```
+
+### Manual Install (Development)
+
+For local development or contributing:
 
 ```bash
 # Clone this repo
@@ -58,10 +78,6 @@ cd claude_stuff
 # Run the install script
 ./scripts/install-ecosystem.sh
 ```
-
-This will:
-1. Install [beads](https://github.com/steveyegge/beads) (`bd` CLI)
-2. Create symlink at `~/.claude/plugins/local/agent-ecosystem/` → `./plugin/`
 
 ### Enable the Plugin
 
@@ -81,8 +97,10 @@ Add to `~/.claude/settings.json`:
 ### Verify Installation
 
 ```bash
-./scripts/test-ecosystem.sh
+/help  # Should show agent-ecosystem commands
 ```
+
+**Note:** The [beads](https://github.com/steveyegge/beads) CLI (`bd`) must be installed separately for full task tracking functionality. Run `go install github.com/steveyegge/beads/cmd/bd@latest` or see the beads README.
 
 ---
 

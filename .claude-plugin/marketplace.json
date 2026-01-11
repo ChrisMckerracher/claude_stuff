@@ -1,0 +1,21 @@
+{
+  "name": "agent-ecosystem-marketplace",
+  "owner": {
+    "name": "ChrisMckerracher"
+  },
+  "metadata": {
+    "description": "Specialized agents, merge tree workflows, and invisible task tracking for Claude Code",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "agent-ecosystem",
+      "description": "7 specialist agents with merge tree workflows and spelunk exploration",
+      "version": "0.1.0",
+      "author": { "name": "chrismck" },
+      "source": "./plugin",
+      "category": "productivity",
+      "tags": ["agents", "beads", "merge-tree", "tdd", "workflow", "spelunk", "orchestrator"]
+    }
+  ]
+}
