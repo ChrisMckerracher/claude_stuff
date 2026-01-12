@@ -135,13 +135,15 @@ bd dep add "$epic_id" "$task_id" 2>/dev/null \
     || log_warn "Failed to add epic dependency (may already exist)"
 
 # Add blocker dependencies (this task is blocked by the specified tasks)
-for blocker in "${blockers[@]}"; do
-    if [[ -n "$blocker" ]]; then
-        log_info "Adding dependency: $blocker blocks $task_id"
-        bd dep add "$task_id" "$blocker" 2>/dev/null \
-            || log_warn "Failed to add blocker dependency: $blocker"
-    fi
-done
+if [[ ${#blockers[@]} -gt 0 ]]; then
+    for blocker in "${blockers[@]}"; do
+        if [[ -n "$blocker" ]]; then
+            log_info "Adding dependency: $blocker blocks $task_id"
+            bd dep add "$task_id" "$blocker" 2>/dev/null \
+                || log_warn "Failed to add blocker dependency: $blocker"
+        fi
+    done
+fi
 
 # =============================================================================
 # VALIDATION
