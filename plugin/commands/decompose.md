@@ -1,20 +1,26 @@
 ---
 description: Break a feature into a merge tree of dependent tasks
 allowed-tools: ["Bash", "Read", "Glob", "Write", "TodoWrite"]
-argument-hint: "<feature description>"
+argument-hint: "<design-doc-path or feature description>"
 ---
 
 # Decompose Feature into Task Tree
 
-Break the given feature into a merge tree of tasks with proper dependencies.
+Break the given feature into a merge tree of tasks with proper git worktrees and branches.
+
+## Prerequisites
+
+- Must be in a git repository on a branch (not detached HEAD)
+- Must have `bd`, `jq` commands available
+- Design doc should be approved by Product Agent before decomposing
 
 ## Process
 
-1. Understand the feature scope
+1. Read the design document or understand the feature scope
 2. Identify major components/phases
 3. Break each component into ~500 line tasks
 4. Define dependencies (what blocks what)
-5. Create beads tasks with `bd create`
+5. Create epic and tasks using the decompose scripts (NOT raw `bd create`)
 
 ## Task Sizing Guidelines
 
@@ -23,17 +29,74 @@ Break the given feature into a merge tree of tasks with proper dependencies.
 - Too small (<100 lines): Consider combining
 - Each task should be independently testable
 
-## Creating Tasks
+## Creating Epic and Tasks (REQUIRED WORKFLOW)
+
+**IMPORTANT:** Always use the decompose scripts to create proper git worktrees and branches.
+
+### Step 1: Create the Epic (parent)
 
 ```bash
-# Create parent task
-bd create "feature-name" --description "Feature description"
+# Creates epic bead + epic branch + worktree at .worktrees/{epic_id}/
+epic_id=$(./plugin/scripts/decompose-init.sh "Feature Name" "Feature description from design doc")
+```
 
-# Create child tasks
-bd create "feature-name/subtask-1" --description "Subtask description"
-bd create "feature-name/subtask-2" --description "Another subtask" --dep "feature-name/subtask-1"
+This creates:
+- Epic bead with `-t epic` and P0 priority
+- Branch: `epic/{epic_id}`
+- Worktree: `.worktrees/{epic_id}/`
+- Label: `active-branch:{current-branch}` for merge-up target
+
+### Step 2: Create Tasks (children)
+
+```bash
+# Create first task (no blockers)
+task1=$(./plugin/scripts/decompose-task.sh "$epic_id" "Task 1 title" "Task 1 description")
+
+# Create task blocked by task1
+task2=$(./plugin/scripts/decompose-task.sh "$epic_id" "Task 2 title" "Task 2 description" "$task1")
+
+# Create task blocked by multiple tasks
+task3=$(./plugin/scripts/decompose-task.sh "$epic_id" "Task 3 title" "Task 3 description" "$task1" "$task2")
+```
+
+Each task creates:
+- Task bead with `-t task` and P1 priority
+- Branch: `task/{task_id}` (created from epic branch in worktree)
+- Dependency: task blocks epic (epic waits for task)
+- Blocker dependencies if specified
+
+## Example: Full Decomposition
+
+```bash
+# 1. Create epic
+epic_id=$(./plugin/scripts/decompose-init.sh "Status Line Feature" "Add Claude Code status line showing model, cost, git branch, and task count")
+
+# 2. Create independent tasks (can be worked in parallel)
+script_task=$(./plugin/scripts/decompose-task.sh "$epic_id" "Create statusline.sh script" "Implement the status line script with model, cost, branch, task count")
+
+# 3. Create dependent task (blocked by script_task)
+integrate_task=$(./plugin/scripts/decompose-task.sh "$epic_id" "Integrate status line" "Add config to .claude/settings.json, update documentation" "$script_task")
+
+# 4. Show the tree
+echo "Epic: $epic_id"
+echo "Tasks: $script_task (ready), $integrate_task (blocked by $script_task)"
 ```
 
 ## Output
 
-After creating tasks, run `/visualize` to show the resulting tree.
+After creating tasks, run `/visualize` to show the resulting tree with:
+- Epic and task hierarchy
+- Git branches created
+- Worktree location
+- Which tasks are ready vs blocked
+
+## What NOT to Do
+
+Do NOT use raw `bd create` for decomposition:
+```bash
+# WRONG - no worktrees, no branches, no proper epic type
+bd create "feature-name" --description "..."
+bd create "feature-name/subtask-1" --description "..."
+```
+
+Always use the decompose scripts to get proper git integration.
