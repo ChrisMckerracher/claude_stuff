@@ -86,6 +86,7 @@ Commands invoke agents and workflows directly:
 | `/dashboard` | Open web UI at localhost:3847 |
 | `/gitlab-pull-comments` | Fetch MR feedback |
 | `/gitlab-push-mr` | Create/update MR |
+| `/gitlab-stack` | Create and manage stacked MR workflows |
 | `/update-claude` | Update CLAUDE.md with feedback |
 
 </details>
@@ -285,7 +286,7 @@ plugin/                              # <- Plugin root
 │   ├── gitlab-pull-comments.md
 │   ├── gitlab-push-mr.md
 │   └── update-claude.md
-├── skills/                          # Skills (14 total)
+├── skills/                          # Skills (15 total)
 │   ├── architect/SKILL.md
 │   ├── product/SKILL.md
 │   ├── code/SKILL.md
@@ -299,6 +300,7 @@ plugin/                              # <- Plugin root
 │   ├── rebalance/SKILL.md
 │   ├── gitlab-pull-comments/SKILL.md
 │   ├── gitlab-push-mr/SKILL.md
+│   ├── gitlab-stack/SKILL.md        # Stacked MR workflows
 │   └── update-claude/SKILL.md
 ├── lib/                             # TypeScript utilities
 │   └── spelunk/                     # Spelunk implementation
@@ -403,6 +405,35 @@ export GITLAB_HOST="https://gitlab.com"  # or your self-hosted instance
 /gitlab-push-mr              # Create MR for current branch
 /gitlab-push-mr --update     # Update existing MR description
 ```
+
+### Stacked MR Workflows
+
+The `/gitlab-stack` command enables sophisticated multi-MR workflows:
+
+```bash
+/gitlab-stack create <name> <manifest.json>   # Create MR stack
+/gitlab-stack status <name>                   # Show stack state
+/gitlab-stack sync <name>                     # Sync with GitLab
+/gitlab-stack rollup <name>                   # Cherry-pick merged commits
+/gitlab-stack comments <name> <mr-id>         # Fetch MR comments
+/gitlab-stack fix <name> <mr-id>              # Agent-assisted review workflow
+/gitlab-stack abandon <name>                  # Clean up stack
+```
+
+**Key concepts:**
+
+- **Stack**: Tree of related MRs sharing a common root branch
+- **Root MR**: Final MR merging to main (contains rolled-up commits)
+- **Leaf MRs**: Individual MRs targeting root branch (parallel review)
+- **Worktree isolation**: Each stack uses `.worktrees/{stack-name}/`
+- **Tracking docs**: Persistent state at `docs/mr-stacks/{name}.md`
+
+**When to use stacked MRs:**
+
+- Feature requires multiple independently reviewable components
+- Want parallel review workflow without premature merge
+- Need clean cherry-pick roll-up to main branch
+- Large feature spanning 500+ lines across multiple files
 
 ---
 
