@@ -2,3 +2,4 @@ beads/
 plugin/dashboard/node_modules/
 .beads/
 .worktrees/
+.test-analysis/
