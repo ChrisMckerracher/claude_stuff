@@ -8,18 +8,5 @@
   "license": "MIT",
   "repository": "https://github.com/ChrisMckerracher/claude_stuff",
   "homepage": "https://github.com/ChrisMckerracher/claude_stuff#readme",
-  "keywords": ["agents", "beads", "merge-tree", "tdd", "workflow", "spelunk", "orchestrator"],
-  "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/session-start.sh"
-          }
-        ]
-      }
-    ]
-  }
+  "keywords": ["agents", "beads", "merge-tree", "tdd", "workflow", "spelunk", "orchestrator"]
 }

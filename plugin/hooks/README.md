@@ -1,29 +1,16 @@
 # Hook Registration
 
-Add these to your `~/.claude/settings.json` or project `.claude/settings.json`:
+## Auto-Registered Hooks (via Plugin)
 
-## Session Start Hook
+The **SessionStart** hook is automatically registered when the plugin is installed. It shows ready tasks when starting a Claude session in a project with beads.
 
-Shows ready tasks when starting a Claude session in a project with beads:
+No manual configuration needed - just install the plugin.
 
-```json
-{
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/plugins/local/agent-ecosystem/hooks/session-start.sh"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
+## Opt-In Hooks (Manual Configuration)
 
-## Pre-Push Security Hook
+The **PreToolUse** security hook requires manual opt-in because it runs on ALL Bash commands. Add to your `~/.claude/settings.json` or project `.claude/settings.json`:
+
+### Pre-Push Security Hook
 
 Runs security checks before push operations:
 
@@ -45,32 +32,4 @@ Runs security checks before push operations:
 }
 ```
 
-## Full Configuration Example
-
-```json
-{
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/plugins/local/agent-ecosystem/hooks/session-start.sh"
-          }
-        ]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/plugins/local/agent-ecosystem/hooks/pre-push-security.sh"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
+**Note:** This hook intercepts every Bash command to check for `git push`. Only enable if you want security scanning on all push operations.

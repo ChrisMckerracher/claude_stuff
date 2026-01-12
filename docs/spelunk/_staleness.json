@@ -25,6 +25,15 @@
         "scripts/setup-plugin.sh": "6c194ff4",
         "scripts/test-ecosystem.sh": "162c1bed"
       }
+    },
+    "boundaries/hooks-analysis.md": {
+      "generated": "2026-01-11T00:00:00Z",
+      "source_files": {
+        "plugin/hooks/session-start.sh": "6a24e3dd",
+        "plugin/hooks/pre-push-security.sh": "ffb0b1d2",
+        "plugin/.claude-plugin/plugin.json": "cdf6c683",
+        "plugin/hooks/README.md": "6cda06ef"
+      }
     }
   }
 }
