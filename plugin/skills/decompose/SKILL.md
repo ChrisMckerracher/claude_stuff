@@ -9,76 +9,101 @@ Break a feature into a merge tree of tasks with proper dependencies.
 
 ## Process
 
-**CRITICAL**: This skill creates an EPIC (not a task) with its own worktree.
-Do NOT skip steps 5-7 or agents will work directly on the current branch.
-
-1. Read the design doc or feature description
-2. Identify natural boundaries (components, layers, files)
-3. Create tasks targeting 500 lines each (max 1000)
-4. Establish blocking dependencies (children block parent)
-5. **Create epic bead** (MUST use `-t epic` type):
+1. **Analyze** the design doc or feature description
+2. **Identify** natural boundaries (components, layers, files)
+3. **Plan** tasks targeting ~500 lines each (max 1000)
+4. **Create epic** with worktree:
    ```bash
-   bd create "Epic: ${feature_name}" -t epic -p 0 -d "${description}" --json
+   epic_id=$(plugin/scripts/decompose-init.sh "Feature Name" "Description")
    ```
-   Store the returned ID as `${epic_id}`.
-
-6. **Create worktree for epic** (after epic bead creation):
+5. **Create tasks** with dependencies:
    ```bash
-   # Variables (set these first)
-   epic_id="<id from step 5>"
-   active_branch=$(git branch --show-current)
-   project_root=$(git rev-parse --show-toplevel)
+   # Independent tasks (can run in parallel)
+   task1=$(plugin/scripts/decompose-task.sh "$epic_id" "Task 1" "Description")
+   task2=$(plugin/scripts/decompose-task.sh "$epic_id" "Task 2" "Description")
 
-   # Create epic branch from current HEAD
-   git branch "epic/${epic_id}"
+   # Dependent task (blocked by task1)
+   task3=$(plugin/scripts/decompose-task.sh "$epic_id" "Task 3" "Description" "$task1")
 
-   # Create worktree in .worktrees/ subfolder
-   git worktree add "${project_root}/.worktrees/${epic_id}" "epic/${epic_id}"
-
-   # Store active branch in bead metadata
-   bd update "${epic_id}" --add-label "active-branch:${active_branch}"
-
-   # Add .worktrees/ to .gitignore if not present
-   grep -q "^\.worktrees/$" .gitignore || echo ".worktrees/" >> .gitignore
+   # Task blocked by multiple
+   task4=$(plugin/scripts/decompose-task.sh "$epic_id" "Task 4" "Description" "$task1" "$task2")
    ```
+6. **Report** task tree to user
 
-7. **Verify worktree creation** (REQUIRED before proceeding):
-   ```bash
-   # Confirm worktree exists
-   git worktree list | grep -q "${epic_id}" || { echo "ERROR: Worktree creation failed"; exit 1; }
+## Scripts
 
-   # Confirm label was added
-   bd show "${epic_id}" | grep -q "active-branch:" || { echo "ERROR: Label not set"; exit 1; }
-   ```
-   If verification fails, do NOT proceed. Report error to user.
+### `decompose-init.sh`
 
-8. Create child task beads with `bd create -t task`
-9. Report task tree in plain language
+Creates epic bead + worktree. Handles:
+- Epic bead with `-t epic`
+- Branch `epic/{epic_id}`
+- Worktree at `.worktrees/{epic_id}/`
+- Label `active-branch:{current_branch}`
+- Updates `.gitignore`
+- Validates everything
+
+**Output:** `epic_id` to stdout
+
+### `decompose-task.sh`
+
+Creates task bead + branch in epic worktree. Handles:
+- Task bead with `-t task`
+- Branch `task/{task_id}` in worktree
+- Dependency: task blocks epic
+- Optional blocker dependencies
+
+**Output:** `task_id` to stdout
 
 ## Output Format
 
-Feature: [name]
-├── Task A (ready) - [description]
-├── Task B (ready) - [description]
-└── Task C (blocked by A, B)
-    ├── Task C.1 (ready) - [description]
-    └── Task C.2 (ready) - [description]
+Report to user in plain language:
 
-Ready to work: Task A, Task B, Task C.1, Task C.2
+```
+Feature: Auth System
+├── middleware (ready) - JWT validation layer
+├── routes (blocked by middleware) - User API endpoints
+└── tests (blocked by middleware, routes) - Integration tests
+
+Worktree: .worktrees/claude_stuff-xxx/
+Ready to work: middleware
+```
 
 ## Size Guidelines
 
-- Target: 500 lines per task
-- Maximum: 1000 lines (emergency only)
-- If task > 1000 lines: decompose further
+| Lines | Action |
+|-------|--------|
+| < 500 | Good task size |
+| 500-1000 | Acceptable |
+| > 1000 | Split further |
 
-## Beads Commands (invisible to user)
+## Example
 
-# Create task
-bd create "Task title" -t task -p 1 -d "Description" --json
+```bash
+# User asks: "Decompose the auth feature from docs/plans/auth-design.md"
 
-# Add blocking dependency
-bd dep add <child-id> <parent-id> --type blocks
+# 1. Agent reads design, identifies 3 tasks
 
-# Show tree
-bd dep tree <root-id>
+# 2. Create epic
+epic_id=$(plugin/scripts/decompose-init.sh "Auth System" "JWT-based user authentication")
+# Output: claude_stuff-abc
+
+# 3. Create tasks
+middleware=$(plugin/scripts/decompose-task.sh "$epic_id" "Auth Middleware" "JWT validation")
+# Output: claude_stuff-def
+
+routes=$(plugin/scripts/decompose-task.sh "$epic_id" "User Routes" "API endpoints" "$middleware")
+# Output: claude_stuff-ghi
+
+tests=$(plugin/scripts/decompose-task.sh "$epic_id" "Auth Tests" "Integration tests" "$middleware" "$routes")
+# Output: claude_stuff-jkl
+
+# 4. Report to user
+# "Created epic claude_stuff-abc with 3 tasks..."
+```
+
+## After Decompose
+
+Once tasks exist:
+- Use `/code` to implement tasks (in `.worktrees/{epic_id}/`)
+- Use `/merge-up` when leaf tasks complete
+- Epic merges to original branch when all tasks done
