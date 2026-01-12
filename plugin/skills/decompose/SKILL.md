@@ -9,30 +9,51 @@ Break a feature into a merge tree of tasks with proper dependencies.
 
 ## Process
 
+**CRITICAL**: This skill creates an EPIC (not a task) with its own worktree.
+Do NOT skip steps 5-7 or agents will work directly on the current branch.
+
 1. Read the design doc or feature description
 2. Identify natural boundaries (components, layers, files)
 3. Create tasks targeting 500 lines each (max 1000)
 4. Establish blocking dependencies (children block parent)
-5. Create epic bead with `bd create` (invisible to user)
+5. **Create epic bead** (MUST use `-t epic` type):
+   ```bash
+   bd create "Epic: ${feature_name}" -t epic -p 0 -d "${description}" --json
+   ```
+   Store the returned ID as `${epic_id}`.
+
 6. **Create worktree for epic** (after epic bead creation):
    ```bash
-   # Record current branch as merge target
+   # Variables (set these first)
+   epic_id="<id from step 5>"
    active_branch=$(git branch --show-current)
+   project_root=$(git rev-parse --show-toplevel)
 
    # Create epic branch from current HEAD
-   git branch epic/{epic-id}
+   git branch "epic/${epic_id}"
 
    # Create worktree in .worktrees/ subfolder
-   git worktree add .worktrees/{epic-id} epic/{epic-id}
+   git worktree add "${project_root}/.worktrees/${epic_id}" "epic/${epic_id}"
 
    # Store active branch in bead metadata
-   bd --cwd "${project_root}" update {epic-id} --add-label "active-branch:${active_branch}"
+   bd update "${epic_id}" --add-label "active-branch:${active_branch}"
 
    # Add .worktrees/ to .gitignore if not present
    grep -q "^\.worktrees/$" .gitignore || echo ".worktrees/" >> .gitignore
    ```
-7. Create child task beads with `bd create`
-8. Report task tree in plain language
+
+7. **Verify worktree creation** (REQUIRED before proceeding):
+   ```bash
+   # Confirm worktree exists
+   git worktree list | grep -q "${epic_id}" || { echo "ERROR: Worktree creation failed"; exit 1; }
+
+   # Confirm label was added
+   bd show "${epic_id}" | grep -q "active-branch:" || { echo "ERROR: Label not set"; exit 1; }
+   ```
+   If verification fails, do NOT proceed. Report error to user.
+
+8. Create child task beads with `bd create -t task`
+9. Report task tree in plain language
 
 ## Output Format
 
