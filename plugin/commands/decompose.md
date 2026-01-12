@@ -69,17 +69,20 @@ Each task creates:
 
 ```bash
 # 1. Create epic
-epic_id=$(./plugin/scripts/decompose-init.sh "Status Line Feature" "Add Claude Code status line showing model, cost, git branch, and task count")
+epic_id=$(./plugin/scripts/decompose-init.sh "Feature Name" "Feature description from design doc")
 
-# 2. Create independent tasks (can be worked in parallel)
-script_task=$(./plugin/scripts/decompose-task.sh "$epic_id" "Create statusline.sh script" "Implement the status line script with model, cost, branch, task count")
+# 2. Create first task (no blockers)
+task1=$(./plugin/scripts/decompose-task.sh "$epic_id" "Task 1 title" "Task 1 description")
 
-# 3. Create dependent task (blocked by script_task)
-integrate_task=$(./plugin/scripts/decompose-task.sh "$epic_id" "Integrate status line" "Add config to .claude/settings.json, update documentation" "$script_task")
+# 3. Create task blocked by task1
+task2=$(./plugin/scripts/decompose-task.sh "$epic_id" "Task 2 title" "Task 2 description" "$task1")
 
-# 4. Show the tree
+# 4. Create task blocked by multiple tasks
+task3=$(./plugin/scripts/decompose-task.sh "$epic_id" "Task 3 title" "Task 3 description" "$task1" "$task2")
+
+# 5. Show the tree
 echo "Epic: $epic_id"
-echo "Tasks: $script_task (ready), $integrate_task (blocked by $script_task)"
+echo "Tasks: $task1 (ready), $task2 (blocked by $task1), $task3 (blocked by $task1 $task2)"
 ```
 
 ## Output

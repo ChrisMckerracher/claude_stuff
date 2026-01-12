@@ -350,7 +350,6 @@ fi
 | `plugin/commands/code.md` | Add mandatory worktree navigation section |
 | `plugin/agents/coding.md` | Add worktree step to Execute Mode |
 | `plugin/skills/code/SKILL.md` | Update to use task worktree |
-| `plugin/scripts/statusline.sh` | Create (already done in worktree) |
 
 ---
 
