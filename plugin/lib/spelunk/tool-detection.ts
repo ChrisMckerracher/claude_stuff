@@ -95,32 +95,36 @@ function commandExists(command: string): boolean {
 }
 
 /**
- * Check if ENABLE_LSP_TOOL environment variable is set to 1.
+ * Check if LSP tool detection is requested.
+ *
+ * Note: LSP is enabled by default in Claude Code 2.0.74+. This environment
+ * variable is legacy from when LSP was experimental. The agent should use
+ * the planner/processor workflow regardless of this setting.
  */
 function isLspEnabled(): boolean {
-  return process.env.ENABLE_LSP_TOOL === '1';
+  // Legacy check - LSP is now default in Claude Code 2.0.74+
+  // Agent should use planner/processor workflow for LSP operations
+  return process.env.ENABLE_LSP_TOOL === '1' || process.env.ENABLE_LSP_TOOL === 'true';
 }
 
 /**
- * Check if an LSP server is available for a given language.
- * This checks both:
- * 1. If ENABLE_LSP_TOOL=1 is set (Claude Code native LSP)
- * 2. If the language's LSP server binary exists
+ * Check if an LSP server is known for a given language.
+ *
+ * Note: This only checks if we KNOW about an LSP server for the language.
+ * Actual LSP availability is determined by Claude Code, not this code.
  */
 function checkLspForLanguage(language: string): boolean {
-  if (!isLspEnabled()) {
-    return false;
-  }
-
   const server = LSP_SERVERS[language];
   if (!server) {
     return false;
   }
 
-  // When LSP is enabled in Claude Code, it manages the servers internally
-  // We assume if ENABLE_LSP_TOOL=1 is set and we know the server name,
-  // the LSP capability is available for supported languages
-  return true;
+  // If legacy ENABLE_LSP_TOOL is set, assume LSP is available for known languages
+  if (isLspEnabled()) {
+    return true;
+  }
+
+  return false;
 }
 
 /**

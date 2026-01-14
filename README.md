@@ -59,19 +59,20 @@ Requires [beads](https://github.com/steveyegge/beads) for task tracking:
 go install github.com/steveyegge/beads/cmd/bd@latest
 ```
 
-### Optional: LSP Enablement
+### LSP Support
 
-For accurate symbol resolution in the spelunk system, enable Claude Code's LSP support:
-
-```bash
-export ENABLE_LSP_TOOL=1
-```
+LSP is **enabled by default** in Claude Code 2.0.74+. No configuration required.
 
 **Benefits:** Accurate type definitions, find references, cross-references, and navigation.
 
 **Supported Languages:** TypeScript (vtsls), Python (pyright), Go (gopls), Rust (rust-analyzer), Java (jdtls), C/C++ (clangd).
 
-**When LSP is disabled:** Spelunk falls back to ast-grep/semgrep (if installed) or grep-based search.
+**If LSP isn't working:** Ensure you're on Claude Code 2.0.74+:
+```bash
+npm install -g @anthropics/claude-code@latest
+```
+
+**Fallback:** When LSP is unavailable, spelunk uses ast-grep/semgrep (if installed) or grep-based search.
 
 ---
 
@@ -121,7 +122,7 @@ The spelunk system enables persistent codebase exploration that survives across 
 
 **Key Features:**
 - **Lens-based exploration** - Focus on specific aspects: `interfaces`, `flows`, `boundaries`, `contracts`, `trust-zones`
-- **LSP-powered code intelligence** - Accurate symbol resolution when `ENABLE_LSP_TOOL=1` is set
+- **LSP-powered code intelligence** - Accurate symbol resolution (enabled by default in Claude Code 2.0.74+)
 - **Hash-based cache validation** - Documents are validated against SHA-256 hashes of source files
 - **Automatic staleness detection** - Know instantly if a spelunk doc is FRESH, STALE, MISSING, or ORPHANED
 
@@ -131,9 +132,9 @@ The spelunk system enables persistent codebase exploration that survives across 
 |--------|----------|---------------|
 | **Accuracy** | Precise symbol parsing with full type information | Pattern-based search (may miss complex constructs) |
 | **Speed** | Fast (native language servers) | Slower (text scanning) |
-| **Requirements** | `ENABLE_LSP_TOOL=1` | No setup required |
+| **Requirements** | Claude Code 2.0.74+ (default) | No setup required |
 | **Operations** | documentSymbol, findReferences, hover, goToDefinition | grep patterns, ast-grep/semgrep |
-| **Best for** | Production use, large codebases | Quick exploration, when LSP unavailable |
+| **Best for** | Production use, large codebases | Quick exploration, older Claude versions |
 
 **How Hash Validation Works:**
 
@@ -477,9 +478,9 @@ The dashboard is built with Express/TypeScript and runs as a background process.
 
 | Problem | Solution |
 |---------|----------|
-| Spelunk shows "grep fallback" warning | Enable LSP with `export ENABLE_LSP_TOOL=1` |
+| Spelunk shows "grep fallback" warning | Update Claude Code: `npm install -g @anthropics/claude-code@latest` |
 | Inaccurate symbol results | Install language server for your project's language (see Dependencies) |
-| Slow spelunk performance | Use `--max-files` to limit scope, or enable LSP for faster processing |
+| Slow spelunk performance | Use `--max-files` to limit scope, or ensure LSP is working |
 | Stale spelunk documents | Use `--refresh` flag to force regeneration |
 
 ### GitLab Integration

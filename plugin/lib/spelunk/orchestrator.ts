@@ -296,11 +296,11 @@ export async function spelunk(
   // Add warning for degraded mode
   if (strategy === 'grep') {
     warnings.push(
-      'Using grep fallback. Enable LSP with `export ENABLE_LSP_TOOL=1` for accurate symbol resolution.'
+      'Using grep fallback. Update Claude Code for LSP support: `npm install -g @anthropics/claude-code@latest`'
     );
   } else if (strategy === 'ast') {
     warnings.push(
-      'Using AST tools (ast-grep/semgrep). Enable LSP with `export ENABLE_LSP_TOOL=1` for best results.'
+      'Using AST tools (ast-grep/semgrep). Update Claude Code for native LSP: `npm install -g @anthropics/claude-code@latest`'
     );
   }
 

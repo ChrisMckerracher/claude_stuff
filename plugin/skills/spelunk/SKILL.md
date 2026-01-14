@@ -117,7 +117,7 @@ Status values:
 
 Spelunk uses a **tool call delegation** approach:
 
-1. **LSP** (preferred): When `ENABLE_LSP_TOOL=1`, the planner returns LSP tool call specifications that YOU execute using your native LSP tool.
+1. **LSP** (preferred): LSP is enabled by default in Claude Code 2.0.74+. The planner returns LSP tool call specifications that YOU execute using your native LSP tool.
 
 2. **AST** (fallback): Uses `ast-grep` or `semgrep` if installed. Provides structural pattern matching.
 
@@ -125,7 +125,7 @@ Spelunk uses a **tool call delegation** approach:
 
 ## LSP Tool Delegation Workflow
 
-When LSP is enabled (`ENABLE_LSP_TOOL=1`), follow this two-phase workflow:
+When LSP is available (Claude Code 2.0.74+), follow this two-phase workflow:
 
 ### Phase 1: Plan and Execute documentSymbol
 
@@ -193,13 +193,14 @@ const output = await processLspResults(plan, results, {
 
 ## LSP Enablement
 
-To enable LSP-powered spelunking:
-
-```bash
-export ENABLE_LSP_TOOL=1
-```
+LSP is **enabled by default** in Claude Code 2.0.74+. No configuration required.
 
 **Supported Languages:** TypeScript (vtsls), Python (pyright), Go (gopls), Rust (rust-analyzer), Java (jdtls), C/C++ (clangd)
+
+**If LSP isn't working:** Ensure you're on Claude Code 2.0.74+:
+```bash
+npm install -g @anthropics/claude-code@latest
+```
 
 **When LSP is unavailable:** Falls back to AST tools (ast-grep/semgrep) or grep-based search.
 
