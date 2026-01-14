@@ -58,6 +58,18 @@ export {
   focusToSlug as focusToSlugFromFileFinder,
 } from './file-finder';
 
+// Re-export processor types
+export {
+  type ProcessorOptions,
+} from './processor';
+
+// Re-export processor functions
+export {
+  processLspResults,
+  symbolKindToString,
+  extractHoverContent,
+} from './processor';
+
 // Re-export persistence functions
 export {
   toSlug,
