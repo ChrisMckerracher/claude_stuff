@@ -115,13 +115,93 @@ Status values:
 
 ## Tool Detection Strategy
 
-Spelunk automatically selects the best available tool:
+Spelunk uses a **tool call delegation** approach:
 
-1. **LSP** (preferred): Requires `ENABLE_LSP_TOOL=1`. Provides accurate symbol resolution, type information, and cross-references.
+1. **LSP** (preferred): When `ENABLE_LSP_TOOL=1`, the planner returns LSP tool call specifications that YOU execute using your native LSP tool.
 
 2. **AST** (fallback): Uses `ast-grep` or `semgrep` if installed. Provides structural pattern matching.
 
 3. **Grep** (last resort): Uses Grep/Glob/Read tools for lexical search. Always available.
+
+## LSP Tool Delegation Workflow
+
+When LSP is enabled (`ENABLE_LSP_TOOL=1`), follow this two-phase workflow:
+
+### Phase 1: Plan and Execute documentSymbol
+
+```typescript
+import { planSpelunk, extractSymbolsForPhase2 } from 'plugin/lib/spelunk';
+
+// 1. Get the plan
+const plan = await planSpelunk('interfaces', 'authentication layer', {
+  maxFiles: 50
+});
+
+// 2. Execute LSP tool calls for each entry
+const results: SpelunkResults = {
+  documentSymbols: {},
+  references: {},
+  hovers: {}
+};
+
+for (const toolCall of plan.toolCalls) {
+  if (toolCall.operation === 'documentSymbol') {
+    // Use your LSP tool to get documentSymbol
+    const symbols = await lspDocumentSymbol(toolCall.uri);
+    results.documentSymbols[toolCall.uri] = symbols;
+  }
+}
+```
+
+### Phase 2: Extract Symbols and Get References/Hover (Optional)
+
+```typescript
+import { planReferencesPhase, extractSymbolsForPhase2 } from 'plugin/lib/spelunk';
+import { getLens } from 'plugin/lib/spelunk';
+
+// 1. Extract symbols from phase 1 results
+const lensSpec = getLens('interfaces');
+const symbols = extractSymbolsForPhase2(results.documentSymbols, lensSpec);
+
+// 2. Get phase 2 tool calls
+const phase2Calls = await planReferencesPhase(symbols);
+
+// 3. Execute phase 2 LSP tool calls
+for (const toolCall of phase2Calls) {
+  if (toolCall.operation === 'findReferences') {
+    const refs = await lspFindReferences(toolCall.uri, toolCall.position!);
+    results.references[`${toolCall.uri}:${toolCall.position.line}`] = refs;
+  } else if (toolCall.operation === 'hover') {
+    const hover = await lspHover(toolCall.uri, toolCall.position!);
+    results.hovers[`${toolCall.uri}:${toolCall.position.line}:${toolCall.position.character}`] = hover;
+  }
+}
+```
+
+### Phase 3: Process Results
+
+```typescript
+import { processLspResults } from 'plugin/lib/spelunk';
+
+// Process LSP results through lens filtering
+const output = await processLspResults(plan, results, {
+  maxOutput: 500
+});
+
+// output.entries contains filtered, structured exploration data
+```
+
+## LSP Enablement
+
+To enable LSP-powered spelunking:
+
+```bash
+export ENABLE_LSP_TOOL=1
+```
+
+**Supported Languages:** TypeScript (vtsls), Python (pyright), Go (gopls), Rust (rust-analyzer), Java (jdtls), C/C++ (clangd)
+
+**When LSP is unavailable:** Falls back to AST tools (ast-grep/semgrep) or grep-based search.
 
 ## Integration with Agents
 
