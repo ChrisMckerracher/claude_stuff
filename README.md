@@ -59,6 +59,20 @@ Requires [beads](https://github.com/steveyegge/beads) for task tracking:
 go install github.com/steveyegge/beads/cmd/bd@latest
 ```
 
+### Optional: LSP Enablement
+
+For accurate symbol resolution in the spelunk system, enable Claude Code's LSP support:
+
+```bash
+export ENABLE_LSP_TOOL=1
+```
+
+**Benefits:** Accurate type definitions, find references, cross-references, and navigation.
+
+**Supported Languages:** TypeScript (vtsls), Python (pyright), Go (gopls), Rust (rust-analyzer), Java (jdtls), C/C++ (clangd).
+
+**When LSP is disabled:** Spelunk falls back to ast-grep/semgrep (if installed) or grep-based search.
+
 ---
 
 ## Usage
@@ -107,8 +121,19 @@ The spelunk system enables persistent codebase exploration that survives across 
 
 **Key Features:**
 - **Lens-based exploration** - Focus on specific aspects: `interfaces`, `flows`, `boundaries`, `contracts`, `trust-zones`
+- **LSP-powered code intelligence** - Accurate symbol resolution when `ENABLE_LSP_TOOL=1` is set
 - **Hash-based cache validation** - Documents are validated against SHA-256 hashes of source files
 - **Automatic staleness detection** - Know instantly if a spelunk doc is FRESH, STALE, MISSING, or ORPHANED
+
+**LSP Mode vs Fallback:**
+
+| Aspect | LSP Mode | Fallback Mode |
+|--------|----------|---------------|
+| **Accuracy** | Precise symbol parsing with full type information | Pattern-based search (may miss complex constructs) |
+| **Speed** | Fast (native language servers) | Slower (text scanning) |
+| **Requirements** | `ENABLE_LSP_TOOL=1` | No setup required |
+| **Operations** | documentSymbol, findReferences, hover, goToDefinition | grep patterns, ast-grep/semgrep |
+| **Best for** | Production use, large codebases | Quick exploration, when LSP unavailable |
 
 **How Hash Validation Works:**
 
@@ -446,13 +471,46 @@ The dashboard is built with Express/TypeScript and runs as a background process.
 
 ---
 
+## Troubleshooting
+
+### Spelunk Issues
+
+| Problem | Solution |
+|---------|----------|
+| Spelunk shows "grep fallback" warning | Enable LSP with `export ENABLE_LSP_TOOL=1` |
+| Inaccurate symbol results | Install language server for your project's language (see Dependencies) |
+| Slow spelunk performance | Use `--max-files` to limit scope, or enable LSP for faster processing |
+| Stale spelunk documents | Use `--refresh` flag to force regeneration |
+
+### GitLab Integration
+
+| Problem | Solution |
+|---------|----------|
+| `GITLAB_TOKEN not set` | Set token: `export GITLAB_TOKEN="your-token"` |
+| MR creation fails | Verify `GITLAB_HOST` is set correctly for self-hosted instances |
+| Comments not appearing | Use `/gitlab-pull-comments --refresh` to sync latest feedback |
+
+---
+
 ## Dependencies
+
+### Required
 
 - [beads](https://github.com/steveyegge/beads) - Git-backed task tracking for AI agents
 - [Claude Code](https://claude.ai/code) - Anthropic's CLI for Claude
 - Node.js 18+ (required for dashboard and TypeScript tooling)
 - `jq` - JSON processing (for hooks)
-- `glab` (optional) - GitLab CLI for MR operations
+
+### Optional
+
+- `glab` - GitLab CLI for MR operations
+- Language servers for LSP-powered spelunking:
+  - **TypeScript/JavaScript:** `npm install -g typescript-language-server` (vtsls)
+  - **Python:** `npm install -g pyright`
+  - **Go:** `go install golang.org/x/tools/gopls@latest`
+  - **Rust:** `rustup component add rust-analyzer`
+  - **Java:** [Eclipse JDT.LS](https://download.eclipse.org/jdtls/snapshots/)
+  - **C/C++:** [clangd](https://clangd.llvm.org/installation)
 
 ---
 

@@ -26,6 +26,30 @@ import {
   ExplorationStrategy,
 } from './tool-detection';
 
+// Re-export planner and processor for LSP tool delegation workflow
+export {
+  planSpelunk,
+  planReferencesPhase,
+  extractSymbolsForPhase2,
+  type PlannerOptions,
+  type DiscoveredSymbol,
+} from './planner';
+
+export {
+  processLspResults,
+  symbolKindToString,
+  extractHoverContent,
+  type ProcessorOptions,
+} from './processor';
+
+export {
+  type SpelunkPlan,
+  type SpelunkResults,
+  type SpelunkOutput,
+  type LspToolCall,
+  type ExplorationEntry as LspExplorationEntry,
+} from './types';
+
 // =============================================================================
 // Types
 // =============================================================================
@@ -272,7 +296,11 @@ export async function spelunk(
   // Add warning for degraded mode
   if (strategy === 'grep') {
     warnings.push(
-      'Using grep fallback. Install ast-grep/semgrep or enable LSP for better results.'
+      'Using grep fallback. Enable LSP with `export ENABLE_LSP_TOOL=1` for accurate symbol resolution.'
+    );
+  } else if (strategy === 'ast') {
+    warnings.push(
+      'Using AST tools (ast-grep/semgrep). Enable LSP with `export ENABLE_LSP_TOOL=1` for best results.'
     );
   }
 

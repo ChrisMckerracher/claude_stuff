@@ -26,6 +26,50 @@ export {
   HASH_LENGTH,
 } from './types';
 
+// Re-export LSP tool call delegation types (new for delegation)
+export {
+  type LspOperation as LspToolCallOperation,
+  type LspToolCall,
+  type SpelunkPlan,
+  type SpelunkResults,
+  type SpelunkOutput,
+} from './types';
+
+// Re-export planner types
+export {
+  type PlannerOptions,
+  type DiscoveredSymbol,
+} from './planner';
+
+// Re-export planner functions
+export {
+  planSpelunk,
+  planReferencesPhase,
+  extractSymbolsForPhase2,
+} from './planner';
+
+// Re-export file-finder functions
+export {
+  findEntryPointFiles,
+  findFilesInFocus,
+  isDirectory,
+  pathToUri,
+  uriToPath,
+  focusToSlug as focusToSlugFromFileFinder,
+} from './file-finder';
+
+// Re-export processor types
+export {
+  type ProcessorOptions,
+} from './processor';
+
+// Re-export processor functions
+export {
+  processLspResults,
+  symbolKindToString,
+  extractHoverContent,
+} from './processor';
+
 // Re-export persistence functions
 export {
   toSlug,
