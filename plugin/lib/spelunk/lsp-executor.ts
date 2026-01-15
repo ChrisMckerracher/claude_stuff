@@ -74,7 +74,7 @@ export interface LensExecutionResult {
   /** Whether results were truncated due to limits */
   truncated: boolean;
   /** Strategy used for exploration */
-  strategy: 'lsp';
+  strategy: 'lsp' | 'lsp-simulated';
   /** Any warnings or notes from execution */
   warnings?: string[];
 }
@@ -847,7 +847,7 @@ export async function executeLens(
     entries,
     filesExamined: files,
     truncated,
-    strategy: 'lsp',
+    strategy: 'lsp-simulated',
     warnings: warnings.length > 0 ? warnings : undefined,
   };
 }

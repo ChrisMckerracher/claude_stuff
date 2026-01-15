@@ -13,7 +13,7 @@ export type LensType = 'interfaces' | 'flows' | 'boundaries' | 'contracts' | 'tr
 /**
  * Tool chain used for spelunking
  */
-export type ToolChain = 'lsp' | 'ast-grep' | 'semgrep' | 'grep-fallback';
+export type ToolChain = 'lsp' | 'lsp-simulated' | 'ast-grep' | 'semgrep' | 'grep-fallback';
 
 /**
  * Source file entry with path and content hash

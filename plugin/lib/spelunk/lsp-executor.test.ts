@@ -203,7 +203,7 @@ describe('executeLens', () => {
 
       expect(result.lens).toBe('interfaces');
       expect(result.focus).toBe('auth');
-      expect(result.strategy).toBe('lsp');
+      expect(result.strategy).toBe('lsp-simulated');
       expect(result.filesExamined.length).toBeGreaterThan(0);
 
       // Should find AuthHandler interface
@@ -403,7 +403,7 @@ describe('executeLens', () => {
 
       // Should work with defaults
       expect(result).toBeDefined();
-      expect(result.strategy).toBe('lsp');
+      expect(result.strategy).toBe('lsp-simulated');
     });
   });
 
@@ -607,7 +607,7 @@ describe('Integration: Full exploration workflow', () => {
 
     // Each lens should have completed successfully
     for (const result of results) {
-      expect(result.strategy).toBe('lsp');
+      expect(result.strategy).toBe('lsp-simulated');
       expect(result.focus).toBe('auth');
       expect(Array.isArray(result.entries)).toBe(true);
       expect(Array.isArray(result.filesExamined)).toBe(true);
@@ -671,7 +671,7 @@ describe('Error handling', () => {
 
     // Should not throw, just may not extract symbols
     expect(result).toBeDefined();
-    expect(result.strategy).toBe('lsp');
+    expect(result.strategy).toBe('lsp-simulated');
   });
 
   test('handles focus in empty subdirectory gracefully', async () => {
@@ -688,7 +688,7 @@ describe('Error handling', () => {
 
     // May find files due to broad glob patterns, but specific focus may yield no results
     expect(result).toBeDefined();
-    expect(result.strategy).toBe('lsp');
+    expect(result.strategy).toBe('lsp-simulated');
   });
 
   test('handles invalid lens name', async () => {
