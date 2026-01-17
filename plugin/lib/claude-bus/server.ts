@@ -1,14 +1,14 @@
 /**
  * Claude Bus MCP Server
  *
- * An MCP server that enables multiple Claude Code instances in tmux to
- * coordinate work. One instance (orchestrator) creates tasks, and idle
- * instances (workers) are dispatched to execute them.
+ * An MCP server that enables multiple Claude Code instances to coordinate work
+ * using polling-based dispatch. One instance (orchestrator) creates tasks, and
+ * idle instances (workers) poll for and execute them.
  *
  * This implementation integrates with:
  * - beads CLI for task tracking
- * - tmux for worker discovery
  * - LRU selection for fair work distribution
+ * - Polling-based dispatch (workers self-register and poll for tasks)
  *
  * @module claude-bus/server
  */
@@ -32,10 +32,8 @@ import type {
   AckTaskResponse,
 } from './types.js';
 import { createState } from './types.js';
-import { discoverWorkers } from './tmux.js';
 import { validateBead, beadSetInProgress, beadMarkBlocked } from './beads.js';
-import { selectWorker, isPollingWorker } from './selection.js';
-import { dispatchToWorker, verifyPaneExists } from './dispatch.js';
+import { selectWorker } from './selection.js';
 import { startIpcServer, type IpcRequest, type IpcResponse } from './ipc.js';
 
 // Helper to create a JSON text response
@@ -46,82 +44,55 @@ function jsonResponse(data: unknown): { content: Array<{ type: 'text'; text: str
 }
 
 /**
- * Internal helper to dispatch a task to a specific worker.
+ * Internal helper to assign a task to a polling worker.
  *
- * Updates worker state, marks bead as in_progress, and sends the
- * /code command to the worker pane via tmux.
+ * Marks the task as pending and the worker will receive it when they call poll_task().
  *
  * @param state - Server state
- * @param worker - Worker to dispatch to
- * @param beadId - Bead ID to dispatch
- * @throws Error if dispatch fails (worker state is rolled back)
+ * @param worker - Worker to assign to
+ * @param beadId - Bead ID to assign
  */
-function dispatchTaskToWorker(state: State, worker: Worker, beadId: string): void {
-  // Verify pane still exists before dispatch
-  if (!verifyPaneExists(worker.pane_id)) {
-    state.workers.delete(worker.pane_title);
-    throw new Error(`Worker pane ${worker.pane_title} no longer exists`);
-  }
-
-  // Track active bead (dedup) - before dispatch so we don't lose track on failure
+function assignTaskToWorker(state: State, worker: Worker, beadId: string): void {
+  // Track active bead (dedup)
   state.activeBeads.add(beadId);
 
-  // Mark bead as in_progress BEFORE dispatch (prevents race condition)
-  // If dispatch fails, bead stays in_progress but can be retried
-  try {
-    beadSetInProgress(beadId);
-  } catch (e) {
-    state.activeBeads.delete(beadId);
-    throw new Error(`Failed to update bead status: ${e}`);
-  }
+  // Create pending task for this worker
+  const pendingTask: PendingTask = {
+    bead_id: beadId,
+    assigned_at: Date.now(),
+  };
+  state.pendingTasks.set(worker.name, pendingTask);
 
-  // Update worker state
-  worker.status = 'busy';
-  worker.available_since = null;
-  worker.busy_since = Date.now();
+  // Update worker state to pending (waiting for ack)
+  worker.status = 'pending';
+  worker.last_activity = Date.now();
   worker.current_task = beadId;
-
-  try {
-    // Dispatch using existing /code skill
-    // Worker's /code will handle: worktree navigation, TDD, human gates, task-complete
-    dispatchToWorker(worker.pane_id, `/code ${beadId}`);
-  } catch (e) {
-    // Rollback worker state on dispatch failure
-    // Note: bead stays in_progress - orchestrator can retry_task() to reassign
-    state.activeBeads.delete(beadId);
-    worker.status = 'available';
-    worker.available_since = Date.now();
-    worker.busy_since = null;
-    worker.current_task = null;
-    throw e;
-  }
 }
 
 /**
  * Process the task queue, dispatching waiting tasks to available workers.
  *
- * Called after a worker becomes available to potentially dispatch
- * queued tasks.
+ * Called after a worker becomes available to potentially dispatch queued tasks.
  *
  * @param state - Server state
  */
 function processQueue(state: State): void {
-  // Discover new workers that may have appeared
-  discoverWorkers(state.workers);
-
   while (state.taskQueue.length > 0) {
     const worker = selectWorker(state.workers);
     if (!worker) break;
 
     const beadId = state.taskQueue.shift()!;
-    try {
-      dispatchTaskToWorker(state, worker, beadId);
-    } catch (e) {
-      // Task dispatch failed - remove from activeBeads so it can be retried
-      // Note: beadId was already removed from taskQueue
-      console.warn(`Failed to dispatch queued task ${beadId}: ${e}`);
-      state.activeBeads.delete(beadId);
-      // Don't re-queue automatically - let orchestrator handle retry
+
+    // Check if this worker has a blocked poll waiting
+    const blockedPoller = state.blockedPollers.get(worker.name);
+
+    if (blockedPoller) {
+      // Resolve their blocked poll immediately
+      assignTaskToWorker(state, worker, beadId);
+      blockedPoller.resolve(state.pendingTasks.get(worker.name)!);
+    } else {
+      // Worker not currently polling - just assign for their next poll
+      assignTaskToWorker(state, worker, beadId);
     }
   }
 }
@@ -133,9 +104,12 @@ function processQueue(state: State): void {
  * - submit_task(bead_id) - Dispatch a task to an available worker
  * - worker_done(bead_id) - Mark worker available after task completion
  * - get_status() - List workers, queue, and idle times
- * - reset_worker(worker_name) - Force a stuck worker back to available
+ * - reset_worker(worker_name) - Force a stuck worker back to idle
  * - retry_task(bead_id) - Re-queue an in_progress task
  * - task_failed(bead_id, reason) - Mark task blocked, free worker
+ * - register_worker(name) - Register a worker for polling
+ * - poll_task(name, timeout_ms) - Long-poll for task assignment
+ * - ack_task(name, bead_id) - Acknowledge task receipt
  *
  * @returns Object containing the configured McpServer instance and state
  */
@@ -175,82 +149,37 @@ export function createClaudeBusServer(): { server: McpServer; state: State } {
         return jsonResponse(response);
       }
 
-      // Refresh worker list (tmux discovery)
-      discoverWorkers(state.workers);
-
-      // Select LRU available worker (prefers polling workers)
+      // Select LRU available worker
       const worker = selectWorker(state.workers);
 
       if (worker) {
-        // Check if this is a polling worker that's currently blocked
-        const blockedPoller = state.blockedPollers.get(worker.pane_title);
+        // Check if this worker has a blocked poll waiting
+        const blockedPoller = state.blockedPollers.get(worker.name);
 
-        if (blockedPoller && isPollingWorker(worker)) {
-          // Polling worker: resolve their blocked poll immediately
-          const pendingTask: PendingTask = {
-            bead_id,
-            assigned_at: Date.now(),
-          };
-
-          // Track active bead for dedup
-          state.activeBeads.add(bead_id);
-
-          // Store pending task for ack verification
-          state.pendingTasks.set(worker.pane_title, pendingTask);
-
-          // Transition worker to pending state (waiting for ack)
-          worker.status = 'pending';
-          worker.available_since = null;
-
-          // Resolve the blocked poller - this unblocks their poll_task call
-          blockedPoller.resolve(pendingTask);
+        if (blockedPoller) {
+          // Resolve their blocked poll immediately
+          assignTaskToWorker(state, worker, bead_id);
+          blockedPoller.resolve(state.pendingTasks.get(worker.name)!);
 
           const response: SubmitTaskResponse = {
             dispatched: true,
-            worker: worker.pane_title,
+            worker: worker.name,
             bead_id,
           };
           return jsonResponse(response);
         }
 
-        // Legacy worker or polling worker not currently blocked: use tmux dispatch
-        if (!isPollingWorker(worker)) {
-          try {
-            dispatchTaskToWorker(state, worker, bead_id);
-            const response: SubmitTaskResponse = {
-              dispatched: true,
-              worker: worker.pane_title,
-              bead_id,
-            };
-            return jsonResponse(response);
-          } catch (e) {
-            const response: SubmitTaskResponse = {
-              dispatched: false,
-              error: `Dispatch failed: ${e instanceof Error ? e.message : String(e)}`,
-              bead_id,
-            };
-            return jsonResponse(response);
-          }
-        }
-
-        // Polling worker not currently blocked: queue task for their next poll
-        const pendingTask: PendingTask = {
-          bead_id,
-          assigned_at: Date.now(),
-        };
-        state.activeBeads.add(bead_id);
-        state.pendingTasks.set(worker.pane_title, pendingTask);
-        worker.status = 'pending';
-        worker.available_since = null;
+        // Worker not currently polling - assign for their next poll
+        assignTaskToWorker(state, worker, bead_id);
 
         const response: SubmitTaskResponse = {
           dispatched: true,
-          worker: worker.pane_title,
+          worker: worker.name,
           bead_id,
         };
         return jsonResponse(response);
       } else {
-        // No worker available - queue the task (legacy queue)
+        // No worker available - queue the task
         state.activeBeads.add(bead_id);
         state.taskQueue.push(bead_id);
         const response: SubmitTaskResponse = {
@@ -287,17 +216,11 @@ export function createClaudeBusServer(): { server: McpServer; state: State } {
         return jsonResponse(response);
       }
 
-      // Mark worker available (bead already closed by worker)
-      // Use appropriate state based on worker type
-      if (isPollingWorker(worker)) {
-        worker.status = 'idle';  // Polling workers go back to idle
-        worker.task_started_at = null;
-      } else {
-        worker.status = 'available';  // Legacy workers use 'available'
-      }
-      worker.available_since = Date.now();
-      worker.busy_since = null;
+      // Mark worker idle
+      worker.status = 'idle';
+      worker.last_activity = Date.now();
       worker.current_task = null;
+      worker.task_started_at = null;
 
       // Process queue to dispatch waiting tasks
       processQueue(state);
@@ -305,7 +228,7 @@ export function createClaudeBusServer(): { server: McpServer; state: State } {
       const response: WorkerDoneResponse = {
         success: true,
         bead_id,
-        worker: worker.pane_title,
+        worker: worker.name,
       };
       return jsonResponse(response);
     }
@@ -316,26 +239,18 @@ export function createClaudeBusServer(): { server: McpServer; state: State } {
     'get_status',
     'Get the current status of all workers and the task queue',
     async () => {
-      // Refresh worker state before reporting (tmux discovery)
-      // This adds any new tmux workers and updates existing ones
-      discoverWorkers(state.workers);
-
-      // Build hybrid worker list (both tmux-discovered and self-registered)
+      // Build worker list
       const workers = Array.from(state.workers.values()).map((w) => {
-        // Determine source: polling workers have registered_at set
-        const source: 'tmux' | 'polling' = isPollingWorker(w) ? 'polling' : 'tmux';
-
         // Get pending task for this worker (if any)
-        const pending = state.pendingTasks.get(w.pane_title);
+        const pending = state.pendingTasks.get(w.name);
 
         return {
-          name: w.pane_title,
+          name: w.name,
           status: w.status,
           current_task: w.current_task,
-          idle_seconds: w.available_since
-            ? Math.floor((Date.now() - w.available_since) / 1000)
+          idle_seconds: (w.status === 'idle' || w.status === 'polling')
+            ? Math.floor((Date.now() - w.last_activity) / 1000)
             : null,
-          source,
           pending_task: pending?.bead_id ?? null,
         };
       });
@@ -379,11 +294,14 @@ export function createClaudeBusServer(): { server: McpServer; state: State } {
         state.activeBeads.delete(previousTask);
       }
 
-      // Mark worker available
-      worker.status = 'available';
-      worker.available_since = Date.now();
-      worker.busy_since = null;
+      // Remove any pending task
+      state.pendingTasks.delete(worker_name);
+
+      // Mark worker idle
+      worker.status = 'idle';
+      worker.last_activity = Date.now();
       worker.current_task = null;
+      worker.task_started_at = null;
 
       // Process queue to dispatch waiting tasks
       processQueue(state);
@@ -424,29 +342,34 @@ export function createClaudeBusServer(): { server: McpServer; state: State } {
         return jsonResponse(response);
       }
 
-      // Refresh worker list
-      discoverWorkers(state.workers);
-
       // Select LRU available worker
       const worker = selectWorker(state.workers);
 
       if (worker) {
-        try {
-          dispatchTaskToWorker(state, worker, bead_id);
+        // Check if this worker has a blocked poll waiting
+        const blockedPoller = state.blockedPollers.get(worker.name);
+
+        if (blockedPoller) {
+          assignTaskToWorker(state, worker, bead_id);
+          blockedPoller.resolve(state.pendingTasks.get(worker.name)!);
+
           const response: RetryTaskResponse = {
             dispatched: true,
-            worker: worker.pane_title,
-            bead_id,
-          };
-          return jsonResponse(response);
-        } catch (e) {
-          const response: RetryTaskResponse = {
-            dispatched: false,
-            error: `Dispatch failed: ${e instanceof Error ? e.message : String(e)}`,
+            worker: worker.name,
             bead_id,
           };
           return jsonResponse(response);
         }
+
+        // Worker not currently polling - assign for their next poll
+        assignTaskToWorker(state, worker, bead_id);
+
+        const response: RetryTaskResponse = {
+          dispatched: true,
+          worker: worker.name,
+          bead_id,
+        };
+        return jsonResponse(response);
       } else {
         // No worker available - queue the task
         state.activeBeads.add(bead_id);
@@ -493,16 +416,10 @@ export function createClaudeBusServer(): { server: McpServer; state: State } {
       );
 
       if (worker) {
-        // Use appropriate state based on worker type
-        if (isPollingWorker(worker)) {
-          worker.status = 'idle';  // Polling workers go back to idle
-          worker.task_started_at = null;
-        } else {
-          worker.status = 'available';  // Legacy workers use 'available'
-        }
-        worker.available_since = Date.now();
-        worker.busy_since = null;
+        worker.status = 'idle';
+        worker.last_activity = Date.now();
         worker.current_task = null;
+        worker.task_started_at = null;
       }
 
       // Process queue to dispatch waiting tasks
@@ -535,15 +452,15 @@ export function createClaudeBusServer(): { server: McpServer; state: State } {
         return jsonResponse(response);
       }
 
-      // Create a new self-registered worker (no pane_id since not tmux-discovered)
+      // Create a new worker
+      const now = Date.now();
       const worker: Worker = {
-        pane_id: '',  // Empty for self-registered workers
-        pane_title: name,
-        status: 'idle',  // Extended state: just registered, not yet polling
-        available_since: Date.now(),
-        busy_since: null,
+        name,
+        status: 'idle',
+        registered_at: now,
+        last_activity: now,
         current_task: null,
-        registered_at: Date.now(),  // Mark as polling worker
+        task_started_at: null,
       };
       state.workers.set(name, worker);
 
@@ -587,9 +504,9 @@ export function createClaudeBusServer(): { server: McpServer; state: State } {
         return jsonResponse(response);
       }
 
-      // Mark worker as polling (extended state: actively waiting for task)
+      // Mark worker as polling (actively waiting for task)
       worker.status = 'polling';
-      worker.available_since = Date.now();
+      worker.last_activity = Date.now();
 
       // Block until task or timeout
       return new Promise<{ content: Array<{ type: 'text'; text: string }> }>((resolve) => {
@@ -657,10 +574,9 @@ export function createClaudeBusServer(): { server: McpServer; state: State } {
         return jsonResponse(response);
       }
 
-      // Transition worker to executing state (extended state for polling workers)
+      // Transition worker to executing state
       worker.status = 'executing';
-      worker.available_since = null;
-      worker.busy_since = Date.now();
+      worker.last_activity = Date.now();
       worker.current_task = bead_id;
       worker.task_started_at = Date.now();
 
@@ -672,9 +588,8 @@ export function createClaudeBusServer(): { server: McpServer; state: State } {
         beadSetInProgress(bead_id);
       } catch (e) {
         // Rollback on failure
-        worker.status = 'idle';  // Reset to idle, not available (polling worker)
-        worker.available_since = Date.now();
-        worker.busy_since = null;
+        worker.status = 'idle';
+        worker.last_activity = Date.now();
         worker.current_task = null;
         worker.task_started_at = null;
         state.activeBeads.delete(bead_id);
@@ -734,24 +649,18 @@ function createIpcHandler(
           };
         }
 
-        // Mark worker available (bead already closed by worker)
-        // Use appropriate state based on worker type
-        if (isPollingWorker(worker)) {
-          worker.status = 'idle';  // Polling workers go back to idle
-          worker.task_started_at = null;
-        } else {
-          worker.status = 'available';  // Legacy workers use 'available'
-        }
-        worker.available_since = Date.now();
-        worker.busy_since = null;
+        // Mark worker idle
+        worker.status = 'idle';
+        worker.last_activity = Date.now();
         worker.current_task = null;
+        worker.task_started_at = null;
 
         // Process queue to dispatch waiting tasks
         processQueueFn();
 
         return {
           success: true,
-          data: { bead_id: request.bead_id, worker: worker.pane_title },
+          data: { bead_id: request.bead_id, worker: worker.name },
         };
       }
 
@@ -782,16 +691,10 @@ function createIpcHandler(
         );
 
         if (failedWorker) {
-          // Use appropriate state based on worker type
-          if (isPollingWorker(failedWorker)) {
-            failedWorker.status = 'idle';  // Polling workers go back to idle
-            failedWorker.task_started_at = null;
-          } else {
-            failedWorker.status = 'available';  // Legacy workers use 'available'
-          }
-          failedWorker.available_since = Date.now();
-          failedWorker.busy_since = null;
+          failedWorker.status = 'idle';
+          failedWorker.last_activity = Date.now();
           failedWorker.current_task = null;
+          failedWorker.task_started_at = null;
         }
 
         // Process queue
@@ -826,31 +729,7 @@ export async function startServer(): Promise<void> {
 
   // Create a processQueue function that uses the state
   const processQueueFn = (): void => {
-    discoverWorkers(state.workers);
-    while (state.taskQueue.length > 0) {
-      const worker = selectWorker(state.workers);
-      if (!worker) break;
-
-      const beadId = state.taskQueue.shift()!;
-      try {
-        // Inline dispatch logic (simplified - just mark busy and dispatch)
-        if (!verifyPaneExists(worker.pane_id)) {
-          state.workers.delete(worker.pane_title);
-          state.activeBeads.delete(beadId);
-          continue;
-        }
-        state.activeBeads.add(beadId);
-        beadSetInProgress(beadId);
-        worker.status = 'busy';
-        worker.available_since = null;
-        worker.busy_since = Date.now();
-        worker.current_task = beadId;
-        dispatchToWorker(worker.pane_id, `/code ${beadId}`);
-      } catch (e) {
-        console.warn(`Failed to dispatch queued task ${beadId}: ${e}`);
-        state.activeBeads.delete(beadId);
-      }
-    }
+    processQueue(state);
   };
 
   // Start IPC server for CLI notifications

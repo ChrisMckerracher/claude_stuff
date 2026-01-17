@@ -2,21 +2,11 @@
 
 ## Overview
 
-Replace the fragile `tmux send-keys` dispatch mechanism with a reliable polling-based architecture where workers actively poll the MCP server for tasks.
+A reliable polling-based architecture where workers actively poll the MCP server for tasks. Workers self-register and long-poll, eliminating the need for external dispatch mechanisms.
 
-## Problem Statement
+## Problem Statement (Historical)
 
-Current dispatch uses keystroke injection:
-```
-tmux send-keys -t %4 '/agent-ecosystem:code bead-123' Enter
-```
-
-Issues:
-- Fire-and-forget with no delivery confirmation
-- Keystrokes can be dropped if pane buffer is full
-- Pane state issues (copy mode, prompts) cause silent failures
-- Wrong skill name (`/code` vs `/agent-ecosystem:code`)
-- Feels "janky" and unreliable
+The original design used `tmux send-keys` for dispatch, which had reliability issues. This has been replaced with the polling model described below.
 
 ## Goals
 
@@ -251,50 +241,21 @@ submit_task({ bead_id: "bead-123" })
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-## Hook Configuration
+## Worker Initialization
 
-### Session Start Hook
+Workers are initialized by providing them with worker mode instructions. The worker name can be configured via environment variable or passed directly.
 
-```json
-{
-  "hooks": [
-    {
-      "event": "onSessionStart",
-      "script": "plugin/hooks/worker-init.sh"
-    }
-  ]
-}
-```
+### Worker Protocol
 
-### worker-init.sh
-
-```bash
-#!/bin/bash
-# Detect if this pane should be a worker
-
-PANE_TITLE=$(tmux display-message -p '#{pane_title}' 2>/dev/null)
-
-if [[ "$PANE_TITLE" =~ ^z\.ai ]]; then
-  echo "WORKER_MODE:$PANE_TITLE"
-else
-  echo "ORCHESTRATOR_MODE"
-fi
-```
-
-### Prompt Injection
-
-When hook returns `WORKER_MODE:<name>`, inject:
+Workers follow this startup sequence:
 
 ```
-You are a bus worker named "<name>". Your job is to poll for and execute tasks.
-
-Startup sequence:
 1. Call register_worker("<name>") to announce yourself
 2. Call poll_task("<name>", 30000) to wait for a task
 3. When you receive a task, call ack_task("<name>", bead_id)
 4. Execute: /agent-ecosystem:code <bead_id>
 5. When the skill completes, call worker_done(bead_id)
-6. Spawn a background agent to continue polling
+6. Resume polling with poll_task("<name>", 30000)
 
 Always acknowledge tasks before executing. Always signal completion.
 ```
@@ -349,20 +310,21 @@ interface State {
 }
 ```
 
-## Migration from Send-Keys
+## Migration from Send-Keys (COMPLETED)
 
-### Deprecation Path
+The migration from tmux send-keys to polling-based dispatch is complete.
 
-1. **Phase 1**: Implement polling tools alongside send-keys
-2. **Phase 2**: Update workers to use polling (hook-triggered)
-3. **Phase 3**: Remove send-keys dispatch code
-4. **Phase 4**: Remove tmux discovery (workers self-register)
+### What Was Removed
 
-### Backward Compatibility
+- `tmux send-keys` dispatch mechanism
+- `tmux list-panes` worker discovery
+- `pane_id` tracking in worker state
+- `discoverWorkers()` function
+- `CLAUDE_BUS_WORKER_PATTERN` environment variable
 
-During migration, `get_status` combines:
-- Self-registered workers (new)
-- tmux-discovered workers (legacy)
+### Current Architecture
+
+Workers now self-register and poll for tasks. No tmux dependencies remain in the dispatch path.
 
 ## Error Handling
 
@@ -375,37 +337,17 @@ During migration, `get_status` combines:
 | Poll timeout | Returns `{ task: null, timeout: true }`, worker re-polls |
 | Ack wrong task | Error: "Task mismatch" |
 
-## Implementation Tasks
+## Implementation Status
 
-### Task 1: Add Polling Tools to MCP Server
-- Add `register_worker` tool
-- Add `poll_task` tool with blocking/Promise implementation
-- Add `ack_task` tool
-- Update state management for new worker states
-- ~200 lines
+All implementation tasks are complete. See `plugin/lib/claude-bus/` for the implementation.
 
-### Task 2: Modify submit_task for Polling
-- Check for blocked pollers and resolve immediately
-- Fall back to pendingTasks queue
-- Update LRU selection to use self-reported state
-- ~100 lines
+### Completed Tasks
 
-### Task 3: Create Worker Init Hook
-- Add `onSessionStart` hook to hooks.json
-- Create `worker-init.sh` script
-- Test pane title detection
-- ~50 lines
-
-### Task 4: Update /agent-ecosystem:code Skill
-- Add "spawn background poller" step after worker_done
-- Document polling continuation pattern
-- ~30 lines
-
-### Task 5: Update get_status for Hybrid Mode
-- Combine self-registered and tmux-discovered workers
-- Show worker state (polling/executing/idle)
-- ~50 lines
+1. **Polling Tools** - `register_worker`, `poll_task`, `ack_task` implemented in server.ts
+2. **Modified submit_task** - Resolves blocked pollers, queues for pending workers
+3. **Worker State Management** - Self-registered workers with idle/polling/executing states
+4. **LRU Selection** - Uses self-reported availability timestamps
 
 ---
 
-*Design Status: DRAFT - Pending product validation*
+*Design Status: IMPLEMENTED - Polling-based dispatch is now the primary mechanism*

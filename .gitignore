@@ -1,5 +1,6 @@
 beads/
 plugin/dashboard/node_modules/
+plugin/lib/dist/
 .beads/
 .worktrees/
 .test-analysis/

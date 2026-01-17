@@ -6,8 +6,8 @@ file="$1"
 ext="${file##*.}"
 ext_lower=$(echo "$ext" | tr '[:upper:]' '[:lower:]')
 
-# Top right pane in the Claude layout is pane 2
-target_pane=2
+# Top right pane in the Claude layout is pane 4
+target_pane=4
 
 case "$ext_lower" in
     md|markdown)

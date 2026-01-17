@@ -33,22 +33,9 @@ export {
 // Re-export worker selection
 export { selectWorker } from './selection.js';
 
-// Re-export worker discovery
-export {
-  getWorkerPattern,
-  parseTmuxOutput,
-  discoverWorkers,
-  discoverAllWorkers,
-} from './tmux.js';
-
-// Re-export dispatch functions
-export {
-  escapeForShell,
-  verifyPaneExists,
-  dispatchToWorker,
-  findFirstWorkerPane,
-  WorkerPaneInfo,
-} from './dispatch.js';
+// Legacy tmux discovery and dispatch functions have been removed.
+// All workers now use polling-based dispatch (register_worker + poll_task + ack_task).
+// See: docs/plans/architect/claude-bus-polling.md
 
 // Re-export server
 export { createClaudeBusServer, startServer } from './server.js';

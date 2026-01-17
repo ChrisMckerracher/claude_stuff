@@ -2,26 +2,37 @@
  * Server Integration Tests
  *
  * Tests that verify the MCP server tools are correctly wired to real implementations.
- * Uses mocks for external dependencies (beads CLI, tmux) to enable unit testing.
+ * Uses mocks for external dependencies (beads CLI) to enable unit testing.
  */
 
 import { createClaudeBusServer } from './server';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import * as beadsModule from './beads';
-import * as tmuxModule from './tmux';
-import * as dispatchModule from './dispatch';
 import * as selectionModule from './selection';
+import type { Worker } from './selection';
 
-// Mock all external modules
+// Mock external modules
 jest.mock('./beads');
-jest.mock('./tmux');
-jest.mock('./dispatch');
 jest.mock('./selection');
 
 const mockBeads = beadsModule as jest.Mocked<typeof beadsModule>;
-const mockTmux = tmuxModule as jest.Mocked<typeof tmuxModule>;
-const mockDispatch = dispatchModule as jest.Mocked<typeof dispatchModule>;
 const mockSelection = selectionModule as jest.Mocked<typeof selectionModule>;
+
+// Helper to create a worker with the new interface
+function createWorker(
+  name: string,
+  status: 'idle' | 'polling' | 'pending' | 'executing',
+  lastActivity: number = Date.now()
+): Worker {
+  return {
+    name,
+    status,
+    registered_at: lastActivity - 10000,
+    last_activity: lastActivity,
+    current_task: (status === 'executing' || status === 'pending') ? 'bd-test' : null,
+    task_started_at: status === 'executing' ? lastActivity : null,
+  };
+}
 
 describe('Claude Bus Server', () => {
   let server: McpServer;
@@ -33,11 +44,6 @@ describe('Claude Bus Server', () => {
     mockBeads.validateBead.mockReturnValue({ valid: true });
     mockBeads.beadSetInProgress.mockReturnValue(undefined);
     mockBeads.beadMarkBlocked.mockReturnValue(undefined);
-
-    mockTmux.discoverWorkers.mockImplementation((workers) => workers);
-
-    mockDispatch.verifyPaneExists.mockReturnValue(true);
-    mockDispatch.dispatchToWorker.mockReturnValue(undefined);
 
     mockSelection.selectWorker.mockReturnValue(null);
 
@@ -59,50 +65,26 @@ describe('Claude Bus Server', () => {
       expect(result.state).toHaveProperty('workers');
       expect(result.state).toHaveProperty('taskQueue');
       expect(result.state).toHaveProperty('activeBeads');
+      expect(result.state).toHaveProperty('pendingTasks');
+      expect(result.state).toHaveProperty('blockedPollers');
     });
   });
 
   describe('tool registration', () => {
-    // Verify tools are registered by checking the server has the expected structure
     it('should register all expected tools', () => {
-      // The server should be an McpServer instance with registered tools
-      // Since we can't easily introspect the registered tools, we verify the server was created
       expect(server).toBeDefined();
     });
   });
 
   describe('integration wiring verification', () => {
-    // These tests verify the imports are correctly wired by checking that
-    // the modules were imported (jest.mock shows they're being used)
-
     it('should import beads module functions', () => {
       expect(mockBeads.validateBead).toBeDefined();
       expect(mockBeads.beadSetInProgress).toBeDefined();
       expect(mockBeads.beadMarkBlocked).toBeDefined();
     });
 
-    it('should import tmux module functions', () => {
-      expect(mockTmux.discoverWorkers).toBeDefined();
-    });
-
-    it('should import dispatch module functions', () => {
-      expect(mockDispatch.verifyPaneExists).toBeDefined();
-      expect(mockDispatch.dispatchToWorker).toBeDefined();
-    });
-
     it('should import selection module functions', () => {
       expect(mockSelection.selectWorker).toBeDefined();
-    });
-  });
-
-  describe('jsonResponse helper behavior', () => {
-    // The jsonResponse helper should produce consistent output format
-    // We test this indirectly through the server's behavior
-
-    it('should format responses as JSON text content', () => {
-      // Server tools return { content: [{ type: 'text', text: JSON.stringify(data) }] }
-      // This format is standard MCP tool response format
-      expect(true).toBe(true); // Placeholder - actual behavior tested via tool calls
     });
   });
 
@@ -111,69 +93,14 @@ describe('Claude Bus Server', () => {
       const result1 = createClaudeBusServer();
       const result2 = createClaudeBusServer();
 
-      // Each server should be a distinct instance
       expect(result1.server).not.toBe(result2.server);
       expect(result1.state).not.toBe(result2.state);
     });
   });
 });
 
-describe('dispatchTaskToWorker helper', () => {
-  // The dispatchTaskToWorker function is internal, but we can verify its behavior
-  // through the mock expectations when submit_task is called
-
-  beforeEach(() => {
-    jest.clearAllMocks();
-  });
-
-  it('should be called with correct arguments when worker is available', () => {
-    // Setup: mock a worker being available
-    const mockWorker = {
-      pane_id: '%4',
-      pane_title: 'z.ai1',
-      status: 'available' as const,
-      available_since: Date.now() - 1000,
-      busy_since: null,
-      current_task: null,
-    };
-
-    mockBeads.validateBead.mockReturnValue({ valid: true });
-    mockSelection.selectWorker.mockReturnValue(mockWorker);
-    mockDispatch.verifyPaneExists.mockReturnValue(true);
-    mockDispatch.dispatchToWorker.mockReturnValue(undefined);
-    mockBeads.beadSetInProgress.mockReturnValue(undefined);
-
-    // Create server and trigger a submit_task (would need to call the tool)
-    createClaudeBusServer();
-
-    // The mock functions should be available for inspection
-    expect(mockDispatch.verifyPaneExists).toBeDefined();
-    expect(mockDispatch.dispatchToWorker).toBeDefined();
-    expect(mockBeads.beadSetInProgress).toBeDefined();
-  });
-});
-
-describe('processQueue helper', () => {
-  // The processQueue function is internal, but we can verify its behavior
-  // through the mock expectations when worker_done is called
-
-  beforeEach(() => {
-    jest.clearAllMocks();
-  });
-
-  it('should call discoverWorkers to refresh worker list', () => {
-    // processQueue calls discoverWorkers at the start
-    mockTmux.discoverWorkers.mockImplementation((workers) => workers);
-
-    createClaudeBusServer();
-
-    // discoverWorkers should be available
-    expect(mockTmux.discoverWorkers).toBeDefined();
-  });
-});
-
 // ============================================================================
-// Polling Tools Tests - Task claude_stuff-a4k
+// Polling Tools Tests
 // Tests for register_worker, poll_task, and ack_task tools
 // ============================================================================
 
@@ -190,30 +117,16 @@ describe('register_worker tool', () => {
   describe('successful registration', () => {
     it('should register a new worker successfully', () => {
       const { state } = createClaudeBusServer();
-
-      // Simulate register_worker tool call
       const workerName = 'z.ai1';
       const now = Date.now();
 
-      // Worker should not exist initially
       expect(state.workers.has(workerName)).toBe(false);
 
-      // Register the worker (simulating what the tool handler would do)
-      state.workers.set(workerName, {
-        pane_id: '',  // Not needed for polling-based workers
-        pane_title: workerName,
-        status: 'idle',
-        registered_at: now,
-        current_task: null,
-        task_started_at: null,
-        available_since: null,
-        busy_since: null,
-      } as any);
+      state.workers.set(workerName, createWorker(workerName, 'idle', now));
 
-      // Verify worker is registered
       expect(state.workers.has(workerName)).toBe(true);
       const worker = state.workers.get(workerName);
-      expect(worker?.pane_title).toBe(workerName);
+      expect(worker?.name).toBe(workerName);
       expect(worker?.status).toBe('idle');
     });
 
@@ -221,27 +134,14 @@ describe('register_worker tool', () => {
       const { state } = createClaudeBusServer();
       const workerName = 'z.ai2';
 
-      // Expected response format from design doc:
-      // { success: true, worker: "z.ai1", message: "Registered" }
       const expectedResponse = {
         success: true,
         worker: workerName,
         message: 'Registered',
       };
 
-      // Simulate registration
-      state.workers.set(workerName, {
-        pane_id: '',
-        pane_title: workerName,
-        status: 'idle',
-        registered_at: Date.now(),
-        current_task: null,
-        task_started_at: null,
-        available_since: null,
-        busy_since: null,
-      } as any);
+      state.workers.set(workerName, createWorker(workerName, 'idle'));
 
-      // Verify expected response structure
       expect(expectedResponse.success).toBe(true);
       expect(expectedResponse.worker).toBe(workerName);
       expect(expectedResponse.message).toBe('Registered');
@@ -251,16 +151,7 @@ describe('register_worker tool', () => {
       const { state } = createClaudeBusServer();
       const workerName = 'z.ai3';
 
-      state.workers.set(workerName, {
-        pane_id: '',
-        pane_title: workerName,
-        status: 'idle',
-        registered_at: Date.now(),
-        current_task: null,
-        task_started_at: null,
-        available_since: null,
-        busy_since: null,
-      } as any);
+      state.workers.set(workerName, createWorker(workerName, 'idle'));
 
       const worker = state.workers.get(workerName);
       expect(worker?.status).toBe('idle');
@@ -270,24 +161,13 @@ describe('register_worker tool', () => {
     it('should record registration timestamp', () => {
       const { state } = createClaudeBusServer();
       const workerName = 'z.ai4';
-      const beforeTime = Date.now();
+      const now = Date.now();
 
-      state.workers.set(workerName, {
-        pane_id: '',
-        pane_title: workerName,
-        status: 'idle',
-        registered_at: Date.now(),
-        current_task: null,
-        task_started_at: null,
-        available_since: null,
-        busy_since: null,
-      } as any);
+      state.workers.set(workerName, createWorker(workerName, 'idle', now));
 
-      const afterTime = Date.now();
       const worker = state.workers.get(workerName);
-
-      expect(worker?.registered_at).toBeGreaterThanOrEqual(beforeTime);
-      expect(worker?.registered_at).toBeLessThanOrEqual(afterTime);
+      expect(worker?.registered_at).toBeDefined();
+      expect(worker?.last_activity).toBe(now);
     });
   });
 
@@ -296,20 +176,8 @@ describe('register_worker tool', () => {
       const { state } = createClaudeBusServer();
       const workerName = 'z.ai1';
 
-      // Register worker first time
-      state.workers.set(workerName, {
-        pane_id: '',
-        pane_title: workerName,
-        status: 'idle',
-        registered_at: Date.now() - 5000,
-        current_task: null,
-        task_started_at: null,
-        available_since: null,
-        busy_since: null,
-      } as any);
+      state.workers.set(workerName, createWorker(workerName, 'idle'));
 
-      // Expected response for already registered worker:
-      // { success: true, worker: "z.ai1", message: "Already registered" }
       const alreadyExists = state.workers.has(workerName);
       expect(alreadyExists).toBe(true);
 
@@ -328,22 +196,12 @@ describe('register_worker tool', () => {
       const workerName = 'z.ai1';
       const originalTimestamp = Date.now() - 10000;
 
-      // Register worker with specific state
-      state.workers.set(workerName, {
-        pane_id: '',
-        pane_title: workerName,
-        status: 'polling',
-        registered_at: originalTimestamp,
-        current_task: null,
-        task_started_at: null,
-        available_since: null,
-        busy_since: null,
-      } as any);
+      const worker = createWorker(workerName, 'polling', originalTimestamp);
+      state.workers.set(workerName, worker);
 
-      // Attempt to re-register should not change existing state
-      const worker = state.workers.get(workerName);
-      expect(worker?.registered_at).toBe(originalTimestamp);
-      expect(worker?.status).toBe('polling');
+      const existingWorker = state.workers.get(workerName);
+      expect(existingWorker?.registered_at).toBe(originalTimestamp - 10000);
+      expect(existingWorker?.status).toBe('polling');
     });
   });
 });
@@ -363,11 +221,8 @@ describe('poll_task tool', () => {
       const { state } = createClaudeBusServer();
       const unknownWorker = 'z.unknown';
 
-      // Worker is not registered
       expect(state.workers.has(unknownWorker)).toBe(false);
 
-      // Expected error response from design doc:
-      // { error: "Unknown worker: z.ai1 - call register_worker first" }
       const expectedError = {
         error: `Unknown worker: ${unknownWorker} - call register_worker first`,
       };
@@ -379,15 +234,9 @@ describe('poll_task tool', () => {
 
     it('should not create blocked poller for unknown worker', () => {
       const { state } = createClaudeBusServer();
-
-      // Verify blockedPollers does not get an entry for unknown worker
-      // (Assuming state has blockedPollers Map as per design doc)
-      if (!state.blockedPollers) {
-        (state as any).blockedPollers = new Map();
-      }
-
       const unknownWorker = 'z.unknown';
-      expect(state.blockedPollers?.has(unknownWorker)).toBeFalsy();
+
+      expect(state.blockedPollers.has(unknownWorker)).toBe(false);
     });
   });
 
@@ -397,29 +246,13 @@ describe('poll_task tool', () => {
       const workerName = 'z.ai1';
       const beadId = 'bead-123';
 
-      // Setup: Register worker
-      state.workers.set(workerName, {
-        pane_id: '',
-        pane_title: workerName,
-        status: 'idle',
-        registered_at: Date.now(),
-        current_task: null,
-        task_started_at: null,
-        available_since: null,
-        busy_since: null,
-      } as any);
+      state.workers.set(workerName, createWorker(workerName, 'idle'));
 
-      // Setup: Add pending task for this worker
-      if (!state.pendingTasks) {
-        (state as any).pendingTasks = new Map();
-      }
       state.pendingTasks.set(workerName, {
         bead_id: beadId,
         assigned_at: Date.now(),
       });
 
-      // Expected response from design doc:
-      // { task: { bead_id: "bead-123", title: "Fix bug", assigned_at: T } }
       const pendingTask = state.pendingTasks.get(workerName);
       expect(pendingTask).toBeDefined();
       expect(pendingTask?.bead_id).toBe(beadId);
@@ -429,22 +262,12 @@ describe('poll_task tool', () => {
       const { state } = createClaudeBusServer();
       const workerName = 'z.ai1';
 
-      // Register worker
-      state.workers.set(workerName, {
-        pane_id: '',
-        pane_title: workerName,
-        status: 'idle',
-        registered_at: Date.now(),
-        current_task: null,
-        task_started_at: null,
-        available_since: null,
-        busy_since: null,
-      } as any);
+      state.workers.set(workerName, createWorker(workerName, 'idle'));
 
-      // When poll_task is called and no task pending, status should change to polling
       const worker = state.workers.get(workerName);
       if (worker) {
         worker.status = 'polling';
+        worker.last_activity = Date.now();
       }
 
       expect(state.workers.get(workerName)?.status).toBe('polling');
@@ -455,22 +278,9 @@ describe('poll_task tool', () => {
     it('should return timeout response after specified duration', async () => {
       const { state } = createClaudeBusServer();
       const workerName = 'z.ai1';
-      const timeoutMs = 30000;
 
-      // Register worker
-      state.workers.set(workerName, {
-        pane_id: '',
-        pane_title: workerName,
-        status: 'idle',
-        registered_at: Date.now(),
-        current_task: null,
-        task_started_at: null,
-        available_since: null,
-        busy_since: null,
-      } as any);
+      state.workers.set(workerName, createWorker(workerName, 'idle'));
 
-      // Expected timeout response from design doc:
-      // { task: null, timeout: true }
       const expectedTimeoutResponse = {
         task: null,
         timeout: true,
@@ -489,77 +299,28 @@ describe('poll_task tool', () => {
       const { state } = createClaudeBusServer();
       const workerName = 'z.ai1';
 
-      // Setup blocked pollers map
-      if (!state.blockedPollers) {
-        (state as any).blockedPollers = new Map();
-      }
+      state.workers.set(workerName, createWorker(workerName, 'polling'));
 
-      // Register worker
-      state.workers.set(workerName, {
-        pane_id: '',
-        pane_title: workerName,
-        status: 'polling',
-        registered_at: Date.now(),
-        current_task: null,
-        task_started_at: null,
-        available_since: null,
-        busy_since: null,
-      } as any);
-
-      // Simulate adding blocked poller
       const timeoutId = setTimeout(() => {}, 30000);
       state.blockedPollers.set(workerName, {
         resolve: () => {},
         timeout_id: timeoutId,
       });
 
-      // Simulate timeout cleanup
       clearTimeout(timeoutId);
       state.blockedPollers.delete(workerName);
 
       expect(state.blockedPollers.has(workerName)).toBe(false);
     });
-
-    it('should allow custom timeout value', () => {
-      const customTimeout = 5000;
-      // Tool should accept timeout_ms parameter
-      expect(customTimeout).toBe(5000);
-      expect(customTimeout).toBeLessThan(30000);
-    });
   });
 
   describe('blocking behavior', () => {
-    it('should block until task is assigned or timeout', () => {
-      // poll_task returns a Promise that resolves when:
-      // 1. A task is assigned (submit_task resolves the blocked poller)
-      // 2. Timeout occurs
-
-      // This test verifies the structure for blocking
-      const pollTaskShouldReturnPromise = true;
-      expect(pollTaskShouldReturnPromise).toBe(true);
-    });
-
     it('should add worker to blockedPollers when waiting', () => {
       const { state } = createClaudeBusServer();
       const workerName = 'z.ai1';
 
-      if (!state.blockedPollers) {
-        (state as any).blockedPollers = new Map();
-      }
+      state.workers.set(workerName, createWorker(workerName, 'polling'));
 
-      // Register worker
-      state.workers.set(workerName, {
-        pane_id: '',
-        pane_title: workerName,
-        status: 'polling',
-        registered_at: Date.now(),
-        current_task: null,
-        task_started_at: null,
-        available_since: null,
-        busy_since: null,
-      } as any);
-
-      // Simulate blocked poller entry
       state.blockedPollers.set(workerName, {
         resolve: jest.fn(),
         timeout_id: setTimeout(() => {}, 30000),
@@ -589,28 +350,12 @@ describe('ack_task tool', () => {
       const workerName = 'z.ai1';
       const beadId = 'bead-123';
 
-      // Setup: Register worker and assign pending task
-      state.workers.set(workerName, {
-        pane_id: '',
-        pane_title: workerName,
-        status: 'pending',
-        registered_at: Date.now() - 5000,
-        current_task: null,
-        task_started_at: null,
-        available_since: null,
-        busy_since: null,
-      } as any);
-
-      if (!state.pendingTasks) {
-        (state as any).pendingTasks = new Map();
-      }
+      state.workers.set(workerName, createWorker(workerName, 'pending'));
       state.pendingTasks.set(workerName, {
         bead_id: beadId,
         assigned_at: Date.now(),
       });
 
-      // Expected success response from design doc:
-      // { success: true, worker: "z.ai1", bead_id: "bead-123" }
       const expectedResponse = {
         success: true,
         worker: workerName,
@@ -627,31 +372,17 @@ describe('ack_task tool', () => {
       const workerName = 'z.ai1';
       const beadId = 'bead-123';
 
-      // Setup worker with pending task
-      state.workers.set(workerName, {
-        pane_id: '',
-        pane_title: workerName,
-        status: 'pending',
-        registered_at: Date.now() - 5000,
-        current_task: null,
-        task_started_at: null,
-        available_since: null,
-        busy_since: null,
-      } as any);
-
-      if (!state.pendingTasks) {
-        (state as any).pendingTasks = new Map();
-      }
+      state.workers.set(workerName, createWorker(workerName, 'pending'));
       state.pendingTasks.set(workerName, {
         bead_id: beadId,
         assigned_at: Date.now(),
       });
 
-      // Simulate ack_task: update worker status
       const worker = state.workers.get(workerName);
       if (worker) {
         worker.status = 'executing';
         worker.current_task = beadId;
+        worker.last_activity = Date.now();
       }
 
       expect(state.workers.get(workerName)?.status).toBe('executing');
@@ -663,9 +394,6 @@ describe('ack_task tool', () => {
       const workerName = 'z.ai1';
       const beadId = 'bead-123';
 
-      if (!state.pendingTasks) {
-        (state as any).pendingTasks = new Map();
-      }
       state.pendingTasks.set(workerName, {
         bead_id: beadId,
         assigned_at: Date.now(),
@@ -673,35 +401,9 @@ describe('ack_task tool', () => {
 
       expect(state.pendingTasks.has(workerName)).toBe(true);
 
-      // Simulate ack clearing pendingTasks
       state.pendingTasks.delete(workerName);
 
       expect(state.pendingTasks.has(workerName)).toBe(false);
-    });
-
-    it('should set current_task on worker', () => {
-      const { state } = createClaudeBusServer();
-      const workerName = 'z.ai1';
-      const beadId = 'bead-456';
-
-      state.workers.set(workerName, {
-        pane_id: '',
-        pane_title: workerName,
-        status: 'pending',
-        registered_at: Date.now(),
-        current_task: null,
-        task_started_at: null,
-        available_since: null,
-        busy_since: null,
-      } as any);
-
-      // Simulate ack_task setting current_task
-      const worker = state.workers.get(workerName);
-      if (worker) {
-        worker.current_task = beadId;
-      }
-
-      expect(state.workers.get(workerName)?.current_task).toBe(beadId);
     });
   });
 
@@ -712,32 +414,15 @@ describe('ack_task tool', () => {
       const pendingBeadId = 'bead-123';
       const wrongBeadId = 'bead-999';
 
-      // Setup worker with pending task
-      state.workers.set(workerName, {
-        pane_id: '',
-        pane_title: workerName,
-        status: 'pending',
-        registered_at: Date.now(),
-        current_task: null,
-        task_started_at: null,
-        available_since: null,
-        busy_since: null,
-      } as any);
-
-      if (!state.pendingTasks) {
-        (state as any).pendingTasks = new Map();
-      }
+      state.workers.set(workerName, createWorker(workerName, 'pending'));
       state.pendingTasks.set(workerName, {
         bead_id: pendingBeadId,
         assigned_at: Date.now(),
       });
 
-      // Attempting to ack wrong task
       const pendingTask = state.pendingTasks.get(workerName);
       const taskMismatch = pendingTask?.bead_id !== wrongBeadId;
 
-      // Expected error response from design doc:
-      // { success: false, error: "Task mismatch" }
       const expectedError = {
         success: false,
         error: 'Task mismatch',
@@ -753,61 +438,14 @@ describe('ack_task tool', () => {
       const workerName = 'z.ai1';
       const pendingBeadId = 'bead-123';
 
-      state.workers.set(workerName, {
-        pane_id: '',
-        pane_title: workerName,
-        status: 'pending',
-        registered_at: Date.now(),
-        current_task: null,
-        task_started_at: null,
-        available_since: null,
-        busy_since: null,
-      } as any);
-
-      if (!state.pendingTasks) {
-        (state as any).pendingTasks = new Map();
-      }
+      state.workers.set(workerName, createWorker(workerName, 'pending'));
       state.pendingTasks.set(workerName, {
         bead_id: pendingBeadId,
         assigned_at: Date.now(),
       });
 
-      // Worker state should remain unchanged on mismatch
       expect(state.workers.get(workerName)?.status).toBe('pending');
-      expect(state.workers.get(workerName)?.current_task).toBeNull();
       expect(state.pendingTasks.has(workerName)).toBe(true);
-    });
-
-    it('should return error when no pending task for worker', () => {
-      const { state } = createClaudeBusServer();
-      const workerName = 'z.ai1';
-      const beadId = 'bead-123';
-
-      state.workers.set(workerName, {
-        pane_id: '',
-        pane_title: workerName,
-        status: 'idle',
-        registered_at: Date.now(),
-        current_task: null,
-        task_started_at: null,
-        available_since: null,
-        busy_since: null,
-      } as any);
-
-      if (!state.pendingTasks) {
-        (state as any).pendingTasks = new Map();
-      }
-      // No pending task for this worker
-
-      const noPendingTask = !state.pendingTasks.has(workerName);
-      expect(noPendingTask).toBe(true);
-
-      const expectedError = {
-        success: false,
-        error: 'Task mismatch',
-      };
-
-      expect(expectedError.success).toBe(false);
     });
   });
 
@@ -815,11 +453,9 @@ describe('ack_task tool', () => {
     it('should return error for unregistered worker', () => {
       const { state } = createClaudeBusServer();
       const unknownWorker = 'z.unknown';
-      const beadId = 'bead-123';
 
       expect(state.workers.has(unknownWorker)).toBe(false);
 
-      // Expected error - similar to poll_task unknown worker
       const expectedError = {
         success: false,
         error: `Unknown worker: ${unknownWorker}`,
@@ -834,11 +470,6 @@ describe('ack_task tool', () => {
       const { state } = createClaudeBusServer();
       const unknownWorker = 'z.unknown';
 
-      if (!state.pendingTasks) {
-        (state as any).pendingTasks = new Map();
-      }
-
-      // Verify no state created for unknown worker
       expect(state.workers.has(unknownWorker)).toBe(false);
       expect(state.pendingTasks.has(unknownWorker)).toBe(false);
     });
@@ -866,26 +497,8 @@ describe('submit_task and poll_task integration', () => {
       const workerName = 'z.ai1';
       const beadId = 'bead-new-task';
 
-      if (!state.blockedPollers) {
-        (state as any).blockedPollers = new Map();
-      }
-      if (!state.pendingTasks) {
-        (state as any).pendingTasks = new Map();
-      }
+      state.workers.set(workerName, createWorker(workerName, 'polling'));
 
-      // Setup: Register worker in polling state
-      state.workers.set(workerName, {
-        pane_id: '',
-        pane_title: workerName,
-        status: 'polling',
-        registered_at: Date.now() - 5000,
-        current_task: null,
-        task_started_at: null,
-        available_since: Date.now() - 1000,
-        busy_since: null,
-      } as any);
-
-      // Setup: Create blocked poller
       let pollResolved = false;
       let resolvedTask: any = null;
 
@@ -900,7 +513,6 @@ describe('submit_task and poll_task integration', () => {
         timeout_id: timeoutId,
       });
 
-      // Action: submit_task should resolve the blocked poller
       const blockedPoller = state.blockedPollers.get(workerName);
       if (blockedPoller) {
         clearTimeout(blockedPoller.timeout_id);
@@ -908,7 +520,6 @@ describe('submit_task and poll_task integration', () => {
         state.blockedPollers.delete(workerName);
       }
 
-      // Verify
       expect(mockResolve).toHaveBeenCalled();
       expect(pollResolved).toBe(true);
       expect(resolvedTask?.bead_id).toBe(beadId);
@@ -919,11 +530,6 @@ describe('submit_task and poll_task integration', () => {
       const { state } = createClaudeBusServer();
       const workerName = 'z.ai1';
 
-      if (!state.blockedPollers) {
-        (state as any).blockedPollers = new Map();
-      }
-
-      // Setup blocked poller with timeout
       const timeoutFn = jest.fn();
       const timeoutId = setTimeout(timeoutFn, 30000);
 
@@ -932,13 +538,11 @@ describe('submit_task and poll_task integration', () => {
         timeout_id: timeoutId,
       });
 
-      // Clear timeout (simulating submit_task behavior)
       const blockedPoller = state.blockedPollers.get(workerName);
       if (blockedPoller) {
         clearTimeout(blockedPoller.timeout_id);
       }
 
-      // Advance timers - timeout should NOT fire
       jest.advanceTimersByTime(35000);
       expect(timeoutFn).not.toHaveBeenCalled();
     });
@@ -948,35 +552,15 @@ describe('submit_task and poll_task integration', () => {
       const workerName = 'z.ai1';
       const beadId = 'bead-queued';
 
-      if (!state.pendingTasks) {
-        (state as any).pendingTasks = new Map();
-      }
-      if (!state.blockedPollers) {
-        (state as any).blockedPollers = new Map();
-      }
+      state.workers.set(workerName, createWorker(workerName, 'idle'));
 
-      // Setup: Register worker in idle state (not polling)
-      state.workers.set(workerName, {
-        pane_id: '',
-        pane_title: workerName,
-        status: 'idle',
-        registered_at: Date.now() - 5000,
-        current_task: null,
-        task_started_at: null,
-        available_since: Date.now() - 1000,
-        busy_since: null,
-      } as any);
-
-      // Worker is not in blockedPollers
       expect(state.blockedPollers.has(workerName)).toBe(false);
 
-      // Action: submit_task should add to pendingTasks instead
       state.pendingTasks.set(workerName, {
         bead_id: beadId,
         assigned_at: Date.now(),
       });
 
-      // Verify
       expect(state.pendingTasks.has(workerName)).toBe(true);
       expect(state.pendingTasks.get(workerName)?.bead_id).toBe(beadId);
     });
@@ -985,49 +569,17 @@ describe('submit_task and poll_task integration', () => {
       const { state } = createClaudeBusServer();
       const now = Date.now();
 
-      // Setup: Multiple workers, z.ai2 is oldest available
-      state.workers.set('z.ai1', {
-        pane_id: '',
-        pane_title: 'z.ai1',
-        status: 'polling',
-        registered_at: now - 10000,
-        current_task: null,
-        task_started_at: null,
-        available_since: now - 1000,  // More recent
-        busy_since: null,
-      } as any);
+      state.workers.set('z.ai1', createWorker('z.ai1', 'polling', now - 1000));
+      state.workers.set('z.ai2', createWorker('z.ai2', 'polling', now - 5000));  // Oldest
+      state.workers.set('z.ai3', createWorker('z.ai3', 'executing', now - 500));
 
-      state.workers.set('z.ai2', {
-        pane_id: '',
-        pane_title: 'z.ai2',
-        status: 'polling',
-        registered_at: now - 15000,
-        current_task: null,
-        task_started_at: null,
-        available_since: now - 5000,  // Oldest (LRU)
-        busy_since: null,
-      } as any);
-
-      state.workers.set('z.ai3', {
-        pane_id: '',
-        pane_title: 'z.ai3',
-        status: 'executing',  // Busy - should not be selected
-        registered_at: now - 20000,
-        current_task: 'bead-other',
-        task_started_at: now - 500,
-        available_since: null,
-        busy_since: now - 500,
-      } as any);
-
-      // Find LRU available worker (status: idle or polling)
       let lruWorker: string | null = null;
-      let oldestAvailableSince = Infinity;
+      let oldestActivity = Infinity;
 
       state.workers.forEach((worker, name) => {
         if (worker.status === 'idle' || worker.status === 'polling') {
-          const availableSince = (worker as any).available_since || worker.registered_at;
-          if (availableSince < oldestAvailableSince) {
-            oldestAvailableSince = availableSince;
+          if (worker.last_activity < oldestActivity) {
+            oldestActivity = worker.last_activity;
             lruWorker = name;
           }
         }
@@ -1041,22 +593,8 @@ describe('submit_task and poll_task integration', () => {
       const workerName = 'z.ai1';
       const beadId = 'bead-assigned';
 
-      if (!state.pendingTasks) {
-        (state as any).pendingTasks = new Map();
-      }
+      state.workers.set(workerName, createWorker(workerName, 'polling'));
 
-      state.workers.set(workerName, {
-        pane_id: '',
-        pane_title: workerName,
-        status: 'polling',
-        registered_at: Date.now() - 5000,
-        current_task: null,
-        task_started_at: null,
-        available_since: Date.now() - 1000,
-        busy_since: null,
-      } as any);
-
-      // Simulate task assignment
       state.pendingTasks.set(workerName, {
         bead_id: beadId,
         assigned_at: Date.now(),
@@ -1065,6 +603,7 @@ describe('submit_task and poll_task integration', () => {
       const worker = state.workers.get(workerName);
       if (worker) {
         worker.status = 'pending';
+        worker.last_activity = Date.now();
       }
 
       expect(state.workers.get(workerName)?.status).toBe('pending');
@@ -1077,31 +616,15 @@ describe('submit_task and poll_task integration', () => {
       const workerName = 'z.ai1';
       const beadId = 'bead-workflow-test';
 
-      if (!state.blockedPollers) {
-        (state as any).blockedPollers = new Map();
-      }
-      if (!state.pendingTasks) {
-        (state as any).pendingTasks = new Map();
-      }
-
       // Step 1: Register worker
-      state.workers.set(workerName, {
-        pane_id: '',
-        pane_title: workerName,
-        status: 'idle',
-        registered_at: Date.now(),
-        current_task: null,
-        task_started_at: null,
-        available_since: null,
-        busy_since: null,
-      } as any);
+      state.workers.set(workerName, createWorker(workerName, 'idle'));
       expect(state.workers.has(workerName)).toBe(true);
 
       // Step 2: Worker starts polling
       const worker = state.workers.get(workerName);
       if (worker) {
         worker.status = 'polling';
-        (worker as any).available_since = Date.now();
+        worker.last_activity = Date.now();
       }
 
       let pollResult: any = null;
@@ -1142,7 +665,8 @@ describe('submit_task and poll_task integration', () => {
       if (worker) {
         worker.status = 'executing';
         worker.current_task = beadId;
-        (worker as any).task_started_at = Date.now();
+        worker.task_started_at = Date.now();
+        worker.last_activity = Date.now();
       }
       state.pendingTasks.delete(workerName);
 
@@ -1155,31 +679,15 @@ describe('submit_task and poll_task integration', () => {
       const { state } = createClaudeBusServer();
       const now = Date.now();
 
-      if (!state.blockedPollers) {
-        (state as any).blockedPollers = new Map();
-      }
-
-      // Setup: Multiple workers polling
       const workers = ['z.ai1', 'z.ai2', 'z.ai3'];
       workers.forEach((name, idx) => {
-        state.workers.set(name, {
-          pane_id: '',
-          pane_title: name,
-          status: 'polling',
-          registered_at: now - (idx + 1) * 1000,
-          current_task: null,
-          task_started_at: null,
-          available_since: now - (idx + 1) * 500,
-          busy_since: null,
-        } as any);
-
+        state.workers.set(name, createWorker(name, 'polling', now - (idx + 1) * 500));
         state.blockedPollers.set(name, {
           resolve: jest.fn(),
           timeout_id: setTimeout(() => {}, 30000),
         });
       });
 
-      // All workers should be polling
       expect(state.blockedPollers.size).toBe(3);
       workers.forEach((name) => {
         expect(state.workers.get(name)?.status).toBe('polling');

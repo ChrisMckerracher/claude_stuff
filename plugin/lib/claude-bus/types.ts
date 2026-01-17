@@ -10,11 +10,8 @@
 import type { Worker, WorkerStatus as WorkerStatusType } from './selection.js';
 
 // Re-export Worker, types, and helper functions for convenience
-export type { Worker, WorkerStatus as WorkerStatusType, LegacyWorkerStatus } from './selection.js';
-export { isWorkerAvailable, isWorkerBusy, isPollingWorker, selectWorker } from './selection.js';
-
-// Re-export PollingWorkerStatus from selection.ts (canonical definition)
-export type { PollingWorkerStatus } from './selection.js';
+export type { Worker, WorkerStatus as WorkerStatusType } from './selection.js';
+export { isWorkerAvailable, isWorkerBusy, selectWorker } from './selection.js';
 
 // ─── Polling System Types ────────────────────────────────────────────────────
 
@@ -74,7 +71,7 @@ export interface AckTaskResponse {
  * Task details live in beads (.beads/), not in MCP server state.
  */
 export interface State {
-  /** Map of pane_title/worker_name to Worker state */
+  /** Map of worker name to Worker state */
   workers: Map<string, Worker>;
   /** Queue of bead IDs waiting for available worker (legacy) */
   taskQueue: string[];
@@ -125,15 +122,12 @@ export interface WorkerDoneResponse {
 
 /**
  * Worker status info for get_status response.
- * Supports both legacy and polling worker states.
  */
 export interface WorkerStatusInfo {
   name: string;
   status: WorkerStatusType;
   current_task: string | null;
   idle_seconds: number | null;
-  /** True if worker was discovered via tmux, false if self-registered */
-  source?: 'tmux' | 'polling';
   /** For pending workers, the assigned task they haven't acked yet */
   pending_task?: string | null;
 }
