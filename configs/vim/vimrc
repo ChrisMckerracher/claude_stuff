@@ -1,0 +1,136 @@
+" ═══════════════════════════════════════════════════════════════════════════════
+"   VIM CONFIG - Claude Code Theme
+" ═══════════════════════════════════════════════════════════════════════════════
+
+set nocompatible
+
+" ─── Plugins ───────────────────────────────────────────────────────────────────
+call plug#begin('~/.vim/plugged')
+
+Plug 'tpope/vim-surround'              " cs'\" to change quotes, ysiw) to wrap
+Plug 'tpope/vim-commentary'            " gcc to comment line, gc in visual
+Plug 'tpope/vim-repeat'                " make . work with plugins
+Plug 'airblade/vim-gitgutter'          " git diff in sign column
+Plug 'junegunn/fzf', { 'do': { -> fzf#install() } }
+Plug 'junegunn/fzf.vim'                " fuzzy finder
+Plug 'preservim/nerdtree'              " file tree
+Plug 'jiangmiao/auto-pairs'            " auto close brackets
+
+call plug#end()
+
+filetype plugin indent on
+syntax on
+
+" ─── Claude Theme ──────────────────────────────────────────────────────────────
+set termguicolors
+set background=dark
+colorscheme claude
+
+" ─── Editor Behavior ───────────────────────────────────────────────────────────
+set number
+set relativenumber
+set cursorline
+set scrolloff=8
+set sidescrolloff=8
+set signcolumn=yes
+set linebreak
+set nowrap
+set hidden
+set mouse=a
+set updatetime=250
+set timeoutlen=400
+
+" ─── Search ────────────────────────────────────────────────────────────────────
+set ignorecase
+set smartcase
+set incsearch
+set hlsearch
+
+" ─── Indentation ───────────────────────────────────────────────────────────────
+set autoindent
+set smartindent
+set expandtab
+set tabstop=4
+set shiftwidth=4
+set softtabstop=4
+
+" ─── Completion ────────────────────────────────────────────────────────────────
+set wildmode=longest:full,full
+set wildmenu
+set completeopt=menuone,noselect
+
+" ─── Splits ────────────────────────────────────────────────────────────────────
+set splitbelow
+set splitright
+
+" ─── Files ─────────────────────────────────────────────────────────────────────
+set nobackup
+set nowritebackup
+set noswapfile
+set undofile
+set undodir=~/.vim/undo
+
+" ─── Misc ──────────────────────────────────────────────────────────────────────
+set showcmd
+set autowrite
+set history=1000
+set ruler
+set backspace=indent,eol,start
+set shortmess+=c
+set clipboard=unnamedplus
+set laststatus=2
+
+" ─── Status Line (minimal) ─────────────────────────────────────────────────────
+set statusline=
+set statusline+=\ %f                     " filename
+set statusline+=\ %m%r                   " modified/readonly
+set statusline+=%=                       " right align
+set statusline+=\ %y                     " filetype
+set statusline+=\ %l:%c                  " line:col
+set statusline+=\ %p%%\                  " percent
+
+" ─── Keymaps ───────────────────────────────────────────────────────────────────
+let mapleader=" "
+
+" Clear search highlight
+nnoremap <Esc> :noh<CR>
+
+" Better window navigation
+nnoremap <C-h> <C-w>h
+nnoremap <C-j> <C-w>j
+nnoremap <C-k> <C-w>k
+nnoremap <C-l> <C-w>l
+
+" Stay in visual mode when indenting
+vnoremap < <gv
+vnoremap > >gv
+
+" Move lines up/down
+vnoremap J :m '>+1<CR>gv=gv
+vnoremap K :m '<-2<CR>gv=gv
+
+" Keep cursor centered
+nnoremap n nzzzv
+nnoremap N Nzzzv
+nnoremap <C-d> <C-d>zz
+nnoremap <C-u> <C-u>zz
+
+" ─── Plugin Keymaps ────────────────────────────────────────────────────────────
+" NERDTree
+nnoremap <leader>e :NERDTreeToggle<CR>
+let NERDTreeShowHidden=1
+let NERDTreeMinimalUI=1
+
+" FZF
+nnoremap <leader>f :Files<CR>
+nnoremap <leader>g :Rg<CR>
+nnoremap <leader>b :Buffers<CR>
+nnoremap <leader>h :History<CR>
+
+" GitGutter
+let g:gitgutter_sign_added = '+'
+let g:gitgutter_sign_modified = '~'
+let g:gitgutter_sign_removed = '_'
+highlight GitGutterAdd    guifg=#a8cc8c ctermfg=149
+highlight GitGutterChange guifg=#dbab79 ctermfg=180
+highlight GitGutterDelete guifg=#e88388 ctermfg=174

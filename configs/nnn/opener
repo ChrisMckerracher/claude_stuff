@@ -1,0 +1,22 @@
+#!/bin/bash
+# nnn opener script - opens files in top right tmux pane (pane 2)
+# Markdown files open in glow, others in vim
+
+file="$1"
+ext="${file##*.}"
+ext_lower=$(echo "$ext" | tr '[:upper:]' '[:lower:]')
+
+# Top right pane in the Claude layout is pane 2
+target_pane=2
+
+case "$ext_lower" in
+    md|markdown)
+        tmux send-keys -t "$target_pane" "glow -p \"$file\"" Enter
+        ;;
+    *)
+        tmux send-keys -t "$target_pane" "vim \"$file\"" Enter
+        ;;
+esac
+
+# Switch focus to the target pane
+tmux select-pane -t "$target_pane"

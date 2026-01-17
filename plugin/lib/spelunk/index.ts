@@ -39,12 +39,14 @@ export {
 export {
   type PlannerOptions,
   type DiscoveredSymbol,
+  type GoToDefinitionOptions,
 } from './planner';
 
 // Re-export planner functions
 export {
   planSpelunk,
   planReferencesPhase,
+  planGoToDefinitionPhase,
   extractSymbolsForPhase2,
 } from './planner';
 

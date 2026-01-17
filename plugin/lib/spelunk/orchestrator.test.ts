@@ -593,3 +593,341 @@ describe('Integration: Complete spelunk workflow', () => {
     expect(result.status).toBe('generated');
   });
 });
+
+// ============================================================================
+// spelunkTwoPhase() tests - Two-phase workflow
+// ============================================================================
+
+describe('spelunkTwoPhase() - Two-phase workflow', () => {
+  let tempDir: string;
+
+  beforeEach(async () => {
+    tempDir = await createTempDir();
+    await ensureDirectoryStructure(tempDir);
+    await createTestFile(
+      tempDir,
+      'src/auth/handler.ts',
+      'export interface AuthRequest { token: string; }'
+    );
+    await createTestFile(
+      tempDir,
+      'src/auth/types.ts',
+      'export type User = { id: string; name: string; };'
+    );
+  });
+
+  afterEach(async () => {
+    await cleanupTempDir(tempDir);
+  });
+
+  describe('Phase 1: Planning', () => {
+    test('returns a plan with tool call specifications', async () => {
+      // Import spelunkTwoPhase (will be implemented)
+      const { spelunkTwoPhase } = await import('./orchestrator');
+
+      const { plan } = await spelunkTwoPhase({
+        lens: 'interfaces',
+        focus: 'auth',
+        projectRoot: tempDir,
+      });
+
+      expect(plan).toBeDefined();
+      expect(plan.lens).toBe('interfaces');
+      expect(plan.focus).toBe('auth');
+      expect(Array.isArray(plan.filesToExamine)).toBe(true);
+      expect(Array.isArray(plan.toolCalls)).toBe(true);
+    });
+
+    test('plan includes documentSymbol calls for files', async () => {
+      const { spelunkTwoPhase } = await import('./orchestrator');
+
+      const { plan } = await spelunkTwoPhase({
+        lens: 'interfaces',
+        focus: 'auth',
+        projectRoot: tempDir,
+      });
+
+      const docSymbolCalls = plan.toolCalls.filter(
+        (tc: { operation: string }) => tc.operation === 'documentSymbol'
+      );
+      expect(docSymbolCalls.length).toBeGreaterThan(0);
+    });
+
+    test('respects maxFiles option', async () => {
+      const { spelunkTwoPhase } = await import('./orchestrator');
+
+      const { plan } = await spelunkTwoPhase({
+        lens: 'interfaces',
+        focus: 'src',
+        projectRoot: tempDir,
+        maxFiles: 1,
+      });
+
+      expect(plan.filesToExamine.length).toBeLessThanOrEqual(1);
+    });
+  });
+
+  describe('Phase 3: Processing', () => {
+    test('processes LSP results and returns SpelunkOutput', async () => {
+      const { spelunkTwoPhase } = await import('./orchestrator');
+
+      // First get a plan
+      const { plan } = await spelunkTwoPhase({
+        lens: 'interfaces',
+        focus: 'auth',
+        projectRoot: tempDir,
+      });
+
+      // Mock LSP results
+      const mockResults = {
+        documentSymbols: {
+          [`file://${path.join(tempDir, 'src/auth/handler.ts')}`]: [
+            {
+              name: 'AuthRequest',
+              kind: 11, // Interface
+              location: {
+                uri: `file://${path.join(tempDir, 'src/auth/handler.ts')}`,
+                range: {
+                  start: { line: 0, character: 0 },
+                  end: { line: 0, character: 50 },
+                },
+              },
+            },
+          ],
+        },
+        references: {},
+        hovers: {},
+      };
+
+      // Process the results
+      const { output } = await spelunkTwoPhase({
+        lens: 'interfaces',
+        focus: 'auth',
+        projectRoot: tempDir,
+        lspResults: mockResults,
+      });
+
+      expect(output).toBeDefined();
+      expect(output!.lens).toBe('interfaces');
+      expect(output!.focus).toBe('auth');
+      expect(Array.isArray(output!.entries)).toBe(true);
+      expect(Array.isArray(output!.filesExamined)).toBe(true);
+    });
+
+    test('filters results based on lens specifications', async () => {
+      const { spelunkTwoPhase } = await import('./orchestrator');
+
+      // Mock LSP results with mixed symbol kinds
+      const mockResults = {
+        documentSymbols: {
+          [`file://${path.join(tempDir, 'src/auth/handler.ts')}`]: [
+            {
+              name: 'AuthRequest',
+              kind: 11, // Interface - should be included
+              location: {
+                uri: `file://${path.join(tempDir, 'src/auth/handler.ts')}`,
+                range: {
+                  start: { line: 0, character: 0 },
+                  end: { line: 0, character: 50 },
+                },
+              },
+            },
+            {
+              name: 'helperVar',
+              kind: 13, // Variable - may or may not be included
+              location: {
+                uri: `file://${path.join(tempDir, 'src/auth/handler.ts')}`,
+                range: {
+                  start: { line: 1, character: 0 },
+                  end: { line: 1, character: 20 },
+                },
+              },
+            },
+          ],
+        },
+        references: {},
+        hovers: {},
+      };
+
+      const { output } = await spelunkTwoPhase({
+        lens: 'interfaces',
+        focus: 'auth',
+        projectRoot: tempDir,
+        lspResults: mockResults,
+      });
+
+      // Should include AuthRequest (interface)
+      expect(output).toBeDefined();
+      const names = output!.entries.map((e: { name: string }) => e.name);
+      expect(names).toContain('AuthRequest');
+    });
+  });
+
+  describe('LSP Fallback', () => {
+    test('returns fallback strategy when LSP is not available', async () => {
+      const { spelunkTwoPhase } = await import('./orchestrator');
+
+      const result = await spelunkTwoPhase({
+        lens: 'interfaces',
+        focus: 'auth',
+        projectRoot: tempDir,
+        skipLsp: true, // Force fallback
+      });
+
+      expect(result.fallbackStrategy).toBeDefined();
+      expect(['ast', 'grep']).toContain(result.fallbackStrategy);
+    });
+
+    test('includes fallback output when LSP unavailable and executeOnFallback is true', async () => {
+      const { spelunkTwoPhase } = await import('./orchestrator');
+
+      const result = await spelunkTwoPhase({
+        lens: 'interfaces',
+        focus: 'auth',
+        projectRoot: tempDir,
+        skipLsp: true,
+        executeOnFallback: true,
+      });
+
+      // When fallback is executed, output should be populated
+      if (result.fallbackStrategy) {
+        expect(result.output).toBeDefined();
+      }
+    });
+  });
+
+  describe('Combined workflow', () => {
+    test('returns both plan and output when lspResults provided', async () => {
+      const { spelunkTwoPhase } = await import('./orchestrator');
+
+      const mockResults = {
+        documentSymbols: {
+          [`file://${path.join(tempDir, 'src/auth/handler.ts')}`]: [
+            {
+              name: 'AuthRequest',
+              kind: 11,
+              location: {
+                uri: `file://${path.join(tempDir, 'src/auth/handler.ts')}`,
+                range: {
+                  start: { line: 0, character: 0 },
+                  end: { line: 0, character: 50 },
+                },
+              },
+            },
+          ],
+        },
+        references: {},
+        hovers: {},
+      };
+
+      const result = await spelunkTwoPhase({
+        lens: 'interfaces',
+        focus: 'auth',
+        projectRoot: tempDir,
+        lspResults: mockResults,
+      });
+
+      expect(result.plan).toBeDefined();
+      expect(result.output).toBeDefined();
+    });
+
+    test('returns only plan when no lspResults provided', async () => {
+      const { spelunkTwoPhase } = await import('./orchestrator');
+
+      const result = await spelunkTwoPhase({
+        lens: 'interfaces',
+        focus: 'auth',
+        projectRoot: tempDir,
+      });
+
+      expect(result.plan).toBeDefined();
+      // Output may be undefined or empty when no results to process
+    });
+  });
+});
+
+// ============================================================================
+// spelunkTwoPhase() tests - Options
+// ============================================================================
+
+describe('spelunkTwoPhase() - Options', () => {
+  let tempDir: string;
+
+  beforeEach(async () => {
+    tempDir = await createTempDir();
+    await ensureDirectoryStructure(tempDir);
+    await createTestFile(
+      tempDir,
+      'src/auth/handler.ts',
+      'export interface AuthRequest { token: string; }'
+    );
+  });
+
+  afterEach(async () => {
+    await cleanupTempDir(tempDir);
+  });
+
+  test('accepts all lens types', async () => {
+    const { spelunkTwoPhase } = await import('./orchestrator');
+
+    const lenses = ['interfaces', 'flows', 'boundaries', 'contracts', 'trust-zones'];
+
+    for (const lens of lenses) {
+      const result = await spelunkTwoPhase({
+        lens: lens as 'interfaces' | 'flows' | 'boundaries' | 'contracts' | 'trust-zones',
+        focus: 'auth',
+        projectRoot: tempDir,
+      });
+
+      expect(result.plan.lens).toBe(lens);
+    }
+  });
+
+  test('accepts maxDepth option', async () => {
+    const { spelunkTwoPhase } = await import('./orchestrator');
+
+    const result = await spelunkTwoPhase({
+      lens: 'interfaces',
+      focus: 'auth',
+      projectRoot: tempDir,
+      maxDepth: 2,
+    });
+
+    expect(result.plan).toBeDefined();
+  });
+
+  test('accepts maxOutput option for processor', async () => {
+    const { spelunkTwoPhase } = await import('./orchestrator');
+
+    const mockResults = {
+      documentSymbols: {
+        [`file://${path.join(tempDir, 'src/auth/handler.ts')}`]: Array.from(
+          { length: 100 },
+          (_, i) => ({
+            name: `Symbol${i}`,
+            kind: 11,
+            location: {
+              uri: `file://${path.join(tempDir, 'src/auth/handler.ts')}`,
+              range: {
+                start: { line: i, character: 0 },
+                end: { line: i, character: 20 },
+              },
+            },
+          })
+        ),
+      },
+      references: {},
+      hovers: {},
+    };
+
+    const result = await spelunkTwoPhase({
+      lens: 'interfaces',
+      focus: 'auth',
+      projectRoot: tempDir,
+      lspResults: mockResults,
+      maxOutput: 10,
+    });
+
+    expect(result.output?.entries.length).toBeLessThanOrEqual(10);
+  });
+});

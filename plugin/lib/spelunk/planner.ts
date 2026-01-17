@@ -143,6 +143,50 @@ export async function planReferencesPhase(
 }
 
 /**
+ * Options for planGoToDefinitionPhase
+ */
+export interface GoToDefinitionOptions {
+  /** Maximum symbols to process (default: 50) */
+  maxSymbols?: number;
+}
+
+/**
+ * Plan phase 3: goToDefinition for tracing symbol origins
+ *
+ * Called after phase 2 to trace where symbols are defined.
+ * Useful for flows and boundaries lenses that need to understand
+ * the dependency graph.
+ *
+ * @param symbols - Symbols to trace definitions for
+ * @param options - Options for limiting scope
+ * @returns LSP tool calls for goToDefinition
+ *
+ * @example
+ * const symbols = [
+ *   { name: 'DefaultAuthHandler', uri: 'file:///path.ts', position: { line: 2, character: 13 }, kind: 5 }
+ * ];
+ * const phase3Calls = await planGoToDefinitionPhase(symbols);
+ * // Returns goToDefinition tool calls for each symbol
+ */
+export async function planGoToDefinitionPhase(
+  symbols: DiscoveredSymbol[],
+  options: GoToDefinitionOptions = {}
+): Promise<LspToolCall[]> {
+  const maxSymbols = options.maxSymbols ?? 50;
+  const toolCalls: LspToolCall[] = [];
+
+  for (const symbol of symbols.slice(0, maxSymbols)) {
+    toolCalls.push({
+      operation: 'goToDefinition',
+      uri: symbol.uri,
+      position: symbol.position,
+    });
+  }
+
+  return toolCalls;
+}
+
+/**
  * Extract symbols from LSP documentSymbol results for phase 2 planning
  *
  * The agent calls this after getting documentSymbol results to determine

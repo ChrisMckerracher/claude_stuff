@@ -15,7 +15,14 @@ import {
   LensName,
 } from './parser';
 import { checkStaleness, checkMultipleLenses } from './staleness-check';
-import { LensType, DocStatus, StalenessCheckResult } from './types';
+import {
+  LensType,
+  DocStatus,
+  StalenessCheckResult,
+  SpelunkPlan,
+  SpelunkResults,
+  SpelunkOutput,
+} from './types';
 import { executeLens, executeLenses, isLspAvailable } from './lsp-executor';
 import { executeAstFallback, isAstAvailable } from './ast-executor';
 import { generateReport, ExecutionResult, ExplorationEntry } from './report-generator';
@@ -27,6 +34,9 @@ import {
 } from './tool-detection';
 
 // Re-export planner and processor for LSP tool delegation workflow
+import { planSpelunk, PlannerOptions } from './planner';
+import { processLspResults, ProcessorOptions } from './processor';
+
 export {
   planSpelunk,
   planReferencesPhase,
@@ -53,6 +63,44 @@ export {
 // =============================================================================
 // Types
 // =============================================================================
+
+/**
+ * Options for the two-phase spelunk workflow
+ */
+export interface SpelunkTwoPhaseOptions {
+  /** The lens type to apply */
+  lens: LensType;
+  /** The focus area to explore */
+  focus: string;
+  /** Project root directory (default: cwd) */
+  projectRoot?: string;
+  /** Maximum number of files to examine (default: 50) */
+  maxFiles?: number;
+  /** Maximum depth for reference tracing (default: 3) */
+  maxDepth?: number;
+  /** Maximum output entries (default: 500) */
+  maxOutput?: number;
+  /** LSP results from agent execution (Phase 2 output) */
+  lspResults?: SpelunkResults;
+  /** Skip LSP and use fallback strategy */
+  skipLsp?: boolean;
+  /** Execute fallback strategy immediately if LSP not available */
+  executeOnFallback?: boolean;
+}
+
+/**
+ * Result of the two-phase spelunk workflow
+ */
+export interface SpelunkTwoPhaseResult {
+  /** The plan with tool call specifications (Phase 1 output) */
+  plan: SpelunkPlan;
+  /** The processed output (Phase 3 output, if lspResults provided) */
+  output?: SpelunkOutput;
+  /** Fallback strategy if LSP not available */
+  fallbackStrategy?: 'ast' | 'grep';
+  /** Warnings from execution */
+  warnings?: string[];
+}
 
 /**
  * Result of a spelunk operation
@@ -357,5 +405,156 @@ export function getSpelunkCapabilities(): {
     ast: availability.ast.astGrep || availability.ast.semgrep,
     grep: true, // Always available
     preferredStrategy: getStrategyForLanguage('typescript', availability),
+  };
+}
+
+// =============================================================================
+// Two-Phase Workflow
+// =============================================================================
+
+/**
+ * Execute a two-phase spelunk workflow for agent delegation.
+ *
+ * This function supports a workflow where:
+ * - Phase 1: Planner returns LSP tool call specifications
+ * - Phase 2: Agent executes the specs (external to this function)
+ * - Phase 3: Processor filters and transforms the results
+ *
+ * @param options - Configuration for the spelunk operation
+ * @returns Promise resolving to SpelunkTwoPhaseResult
+ *
+ * @example
+ * // Phase 1: Get the plan
+ * const { plan } = await spelunkTwoPhase({
+ *   lens: 'interfaces',
+ *   focus: 'authentication',
+ *   projectRoot: '/project'
+ * });
+ *
+ * // Phase 2: Agent executes plan.toolCalls and collects results
+ * // (handled externally)
+ *
+ * // Phase 3: Process the results
+ * const { output } = await spelunkTwoPhase({
+ *   lens: 'interfaces',
+ *   focus: 'authentication',
+ *   projectRoot: '/project',
+ *   lspResults: collectedResults
+ * });
+ */
+export async function spelunkTwoPhase(
+  options: SpelunkTwoPhaseOptions
+): Promise<SpelunkTwoPhaseResult> {
+  const {
+    lens,
+    focus,
+    projectRoot = process.cwd(),
+    maxFiles = 50,
+    maxDepth = 3,
+    maxOutput = 500,
+    lspResults,
+    skipLsp = false,
+    executeOnFallback = false,
+  } = options;
+
+  const warnings: string[] = [];
+
+  // Detect available tools
+  const availability = detectToolsSync();
+  const lspAvailable = availability.lsp.enabled && !skipLsp;
+
+  // Determine fallback strategy if LSP is not available
+  let fallbackStrategy: 'ast' | 'grep' | undefined;
+  if (!lspAvailable) {
+    if (availability.ast.astGrep || availability.ast.semgrep) {
+      fallbackStrategy = 'ast';
+    } else {
+      fallbackStrategy = 'grep';
+    }
+  }
+
+  // Phase 1: Plan the exploration
+  const plan = await planSpelunk(lens, focus, {
+    projectRoot,
+    maxFiles,
+    maxDepth,
+  });
+
+  // If we have LSP results, process them (Phase 3)
+  let output: SpelunkOutput | undefined;
+  if (lspResults) {
+    output = await processLspResults(plan, lspResults, {
+      maxOutput,
+    });
+  } else if (fallbackStrategy && executeOnFallback) {
+    // Execute fallback if requested and LSP not available
+    const fallbackOutput = await executeFallbackStrategy(
+      lens,
+      focus,
+      fallbackStrategy,
+      projectRoot,
+      maxFiles,
+      maxDepth
+    );
+    output = fallbackOutput;
+    if (fallbackStrategy === 'ast') {
+      warnings.push(
+        'Using AST fallback. For better results, enable LSP support.'
+      );
+    } else {
+      warnings.push(
+        'Using grep fallback. Install ast-grep or semgrep for better results.'
+      );
+    }
+  }
+
+  return {
+    plan,
+    output,
+    fallbackStrategy,
+    warnings: warnings.length > 0 ? warnings : undefined,
+  };
+}
+
+/**
+ * Execute fallback strategy when LSP is not available
+ */
+async function executeFallbackStrategy(
+  lens: LensType,
+  focus: string,
+  strategy: 'ast' | 'grep',
+  projectRoot: string,
+  maxFiles: number,
+  maxDepth: number
+): Promise<SpelunkOutput> {
+  if (strategy === 'ast') {
+    const result = await executeAstFallback(lens, focus, {
+      maxFiles,
+      maxDepth,
+      projectRoot,
+    });
+
+    return {
+      lens,
+      focus,
+      entries: result.entries.map((e) => ({
+        name: e.symbolName || e.text.slice(0, 50),
+        kind: 'match',
+        filePath: e.filePath,
+        line: e.line,
+        snippet: e.text,
+        description: `Matched pattern: ${e.matchedPattern}`,
+      })),
+      filesExamined: result.filesExamined,
+    };
+  }
+
+  // Grep fallback - minimal implementation
+  return {
+    lens,
+    focus,
+    entries: [],
+    filesExamined: [],
+    warnings: ['Grep fallback provides limited results. Consider installing AST tools.'],
   };
 }

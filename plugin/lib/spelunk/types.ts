@@ -12,8 +12,12 @@ export type LensType = 'interfaces' | 'flows' | 'boundaries' | 'contracts' | 'tr
 
 /**
  * Tool chain used for spelunking
+ *
+ * Note: 'lsp' indicates that actual LSP delegation was used via the two-phase
+ * workflow (planner + processor). The old 'lsp-simulated' strategy has been
+ * removed in favor of proper LSP delegation.
  */
-export type ToolChain = 'lsp' | 'lsp-simulated' | 'ast-grep' | 'semgrep' | 'grep-fallback';
+export type ToolChain = 'lsp' | 'ast-grep' | 'semgrep' | 'grep-fallback';
 
 /**
  * Source file entry with path and content hash

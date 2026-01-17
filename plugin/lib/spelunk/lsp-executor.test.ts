@@ -1,8 +1,16 @@
 /**
  * Unit tests for LSP-Based Lens Execution
  *
- * Tests for the LSP executor that extracts code intelligence
- * from the codebase using lens specifications.
+ * NOTE: The old regex-based simulation functions have been removed.
+ * executeLens now returns empty results and expects callers to use
+ * the two-phase workflow (planSpelunk + processLspResults) for actual
+ * LSP execution, or fall back to AST/grep strategies.
+ *
+ * These tests verify:
+ * 1. The function returns correct structure with empty entries
+ * 2. Files are correctly discovered based on focus
+ * 3. Proper warnings are returned when LSP is not available
+ * 4. Utility functions work correctly
  */
 
 import * as fs from 'fs/promises';
@@ -194,134 +202,6 @@ describe('executeLens', () => {
     await cleanupTempDir(tempDir);
   });
 
-  describe('interfaces lens', () => {
-    test('extracts interface declarations', async () => {
-      const result = await executeLens('interfaces', 'auth', {
-        projectRoot: tempDir,
-        maxFiles: 10,
-      });
-
-      expect(result.lens).toBe('interfaces');
-      expect(result.focus).toBe('auth');
-      expect(result.strategy).toBe('lsp-simulated');
-      expect(result.filesExamined.length).toBeGreaterThan(0);
-
-      // Should find AuthHandler interface
-      const authHandler = result.entries.find(
-        (e) => e.symbol === 'AuthHandler' && e.kind === 'interface'
-      );
-      expect(authHandler).toBeDefined();
-      expect(authHandler?.file).toContain('types.ts');
-    });
-
-    test('extracts type aliases', async () => {
-      const result = await executeLens('interfaces', 'auth', {
-        projectRoot: tempDir,
-        maxFiles: 10,
-      });
-
-      // Should find TokenPair type
-      const tokenPair = result.entries.find(
-        (e) => e.symbol === 'TokenPair'
-      );
-      expect(tokenPair).toBeDefined();
-    });
-
-    test('extracts enum declarations', async () => {
-      const result = await executeLens('interfaces', 'auth', {
-        projectRoot: tempDir,
-        maxFiles: 10,
-      });
-
-      // Should find AuthStatus enum
-      const authStatus = result.entries.find(
-        (e) => e.symbol === 'AuthStatus' && e.kind === 'enum'
-      );
-      expect(authStatus).toBeDefined();
-    });
-
-    test('extracts class declarations', async () => {
-      const result = await executeLens('interfaces', 'auth', {
-        projectRoot: tempDir,
-        maxFiles: 10,
-      });
-
-      // Should find DefaultAuthHandler class
-      const handler = result.entries.find(
-        (e) => e.symbol === 'DefaultAuthHandler' && e.kind === 'class'
-      );
-      expect(handler).toBeDefined();
-      expect(handler?.file).toContain('handler.ts');
-    });
-  });
-
-  describe('flows lens', () => {
-    test('finds entry points and references', async () => {
-      const result = await executeLens('flows', 'auth', {
-        projectRoot: tempDir,
-        maxFiles: 10,
-      });
-
-      expect(result.lens).toBe('flows');
-      expect(result.filesExamined.length).toBeGreaterThan(0);
-    });
-
-    test('includes route handlers', async () => {
-      const result = await executeLens('flows', 'auth', {
-        projectRoot: tempDir,
-        maxFiles: 10,
-      });
-
-      // Should find createAuthRoutes function
-      const routeCreator = result.entries.find(
-        (e) => e.symbol === 'createAuthRoutes'
-      );
-      expect(routeCreator).toBeDefined();
-    });
-  });
-
-  describe('boundaries lens', () => {
-    test('extracts module-level symbols', async () => {
-      const result = await executeLens('boundaries', 'auth', {
-        projectRoot: tempDir,
-        maxFiles: 10,
-      });
-
-      expect(result.lens).toBe('boundaries');
-      expect(result.entries.length).toBeGreaterThanOrEqual(0);
-    });
-  });
-
-  describe('contracts lens', () => {
-    test('extracts type definitions for QA', async () => {
-      const result = await executeLens('contracts', 'auth', {
-        projectRoot: tempDir,
-        maxFiles: 10,
-      });
-
-      expect(result.lens).toBe('contracts');
-      // Should find interfaces and types
-      const hasTypes = result.entries.some(
-        (e) => e.kind === 'interface' || e.kind === 'typeparameter'
-      );
-      // May or may not find types depending on filter matching
-      expect(result.entries).toBeDefined();
-    });
-  });
-
-  describe('trust-zones lens', () => {
-    test('finds security-related symbols', async () => {
-      const result = await executeLens('trust-zones', 'auth', {
-        projectRoot: tempDir,
-        maxFiles: 10,
-      });
-
-      expect(result.lens).toBe('trust-zones');
-      // Should find auth-related symbols
-      expect(result.filesExamined.length).toBeGreaterThanOrEqual(0);
-    });
-  });
-
   describe('result structure', () => {
     test('returns correct result structure', async () => {
       const result = await executeLens('interfaces', 'auth', {
@@ -339,41 +219,58 @@ describe('executeLens', () => {
       expect(Array.isArray(result.filesExamined)).toBe(true);
     });
 
-    test('entries have required fields', async () => {
+    test('returns correct lens and focus', async () => {
       const result = await executeLens('interfaces', 'auth', {
         projectRoot: tempDir,
         maxFiles: 10,
       });
 
-      for (const entry of result.entries) {
-        expect(entry).toHaveProperty('symbol');
-        expect(entry).toHaveProperty('kind');
-        expect(entry).toHaveProperty('file');
-        expect(entry).toHaveProperty('line');
-        expect(typeof entry.symbol).toBe('string');
-        expect(typeof entry.kind).toBe('string');
-        expect(typeof entry.file).toBe('string');
-        expect(typeof entry.line).toBe('number');
-        expect(entry.line).toBeGreaterThan(0);
-      }
+      expect(result.lens).toBe('interfaces');
+      expect(result.focus).toBe('auth');
     });
 
-    test('entries include optional signature when available', async () => {
+    test('returns lsp strategy', async () => {
       const result = await executeLens('interfaces', 'auth', {
         projectRoot: tempDir,
         maxFiles: 10,
       });
 
-      // At least some entries should have signatures
-      const entriesWithSignature = result.entries.filter(
-        (e) => e.signature !== undefined
-      );
-      // May or may not have signatures depending on hover simulation
-      expect(result.entries).toBeDefined();
+      expect(result.strategy).toBe('lsp');
+    });
+
+    test('returns empty entries (simulation removed)', async () => {
+      const result = await executeLens('interfaces', 'auth', {
+        projectRoot: tempDir,
+        maxFiles: 10,
+      });
+
+      // After removing simulation functions, executeLens returns empty entries
+      // Callers should use two-phase workflow for actual LSP execution
+      expect(result.entries).toEqual([]);
+    });
+
+    test('truncated is false when entries are empty', async () => {
+      const result = await executeLens('interfaces', 'auth', {
+        projectRoot: tempDir,
+        maxFiles: 10,
+      });
+
+      expect(result.truncated).toBe(false);
     });
   });
 
-  describe('options handling', () => {
+  describe('file discovery', () => {
+    test('discovers files matching focus pattern', async () => {
+      const result = await executeLens('interfaces', 'auth', {
+        projectRoot: tempDir,
+        maxFiles: 10,
+      });
+
+      // Files should be discovered even though entries are empty
+      expect(result.filesExamined.length).toBeGreaterThan(0);
+      expect(result.filesExamined.some((f) => f.includes('auth'))).toBe(true);
+    });
+
     test('respects maxFiles option', async () => {
       const result = await executeLens('interfaces', 'auth', {
         projectRoot: tempDir,
@@ -382,34 +279,75 @@ describe('executeLens', () => {
 
       expect(result.filesExamined.length).toBeLessThanOrEqual(1);
     });
+  });
 
-    test('respects maxOutput option', async () => {
+  describe('all lens types work', () => {
+    test('interfaces lens returns correct structure', async () => {
       const result = await executeLens('interfaces', 'auth', {
         projectRoot: tempDir,
-        maxFiles: 100,
-        maxOutput: 2,
+        maxFiles: 10,
       });
 
-      expect(result.entries.length).toBeLessThanOrEqual(2);
-      if (result.entries.length === 2) {
-        expect(result.truncated).toBe(true);
-      }
+      expect(result.lens).toBe('interfaces');
+      expect(result.strategy).toBe('lsp');
     });
 
-    test('uses default options when not provided', async () => {
-      const result = await executeLens('interfaces', 'auth', {
+    test('flows lens returns correct structure', async () => {
+      const result = await executeLens('flows', 'auth', {
         projectRoot: tempDir,
+        maxFiles: 10,
       });
 
-      // Should work with defaults
-      expect(result).toBeDefined();
-      expect(result.strategy).toBe('lsp-simulated');
+      expect(result.lens).toBe('flows');
+      expect(result.strategy).toBe('lsp');
+    });
+
+    test('boundaries lens returns correct structure', async () => {
+      const result = await executeLens('boundaries', 'auth', {
+        projectRoot: tempDir,
+        maxFiles: 10,
+      });
+
+      expect(result.lens).toBe('boundaries');
+      expect(result.strategy).toBe('lsp');
+    });
+
+    test('contracts lens returns correct structure', async () => {
+      const result = await executeLens('contracts', 'auth', {
+        projectRoot: tempDir,
+        maxFiles: 10,
+      });
+
+      expect(result.lens).toBe('contracts');
+      expect(result.strategy).toBe('lsp');
+    });
+
+    test('trust-zones lens returns correct structure', async () => {
+      const result = await executeLens('trust-zones', 'auth', {
+        projectRoot: tempDir,
+        maxFiles: 10,
+      });
+
+      expect(result.lens).toBe('trust-zones');
+      expect(result.strategy).toBe('lsp');
     });
   });
 
-  describe('edge cases', () => {
-    test('handles focus that matches no files in empty directory', async () => {
-      // Create an empty directory with no matching files
+  describe('warnings', () => {
+    test('includes warning about using two-phase workflow when LSP not enabled', async () => {
+      const result = await executeLens('interfaces', 'auth', {
+        projectRoot: tempDir,
+        maxFiles: 10,
+      });
+
+      // LSP is typically not enabled in test environment
+      if (!isLspAvailable()) {
+        expect(result.warnings).toBeDefined();
+        expect(result.warnings?.some((w) => w.includes('two-phase workflow'))).toBe(true);
+      }
+    });
+
+    test('warns when no files found', async () => {
       const emptyDir = await createTempDir();
       await fs.mkdir(path.join(emptyDir, 'src'), { recursive: true });
 
@@ -419,15 +357,15 @@ describe('executeLens', () => {
           maxFiles: 10,
         });
 
-        expect(result.entries.length).toBe(0);
-        expect(result.filesExamined.length).toBe(0);
         expect(result.warnings).toBeDefined();
         expect(result.warnings?.some((w) => w.includes('No files found'))).toBe(true);
       } finally {
         await cleanupTempDir(emptyDir);
       }
     });
+  });
 
+  describe('edge cases', () => {
     test('handles empty project directory', async () => {
       const emptyDir = await createTempDir();
 
@@ -439,42 +377,26 @@ describe('executeLens', () => {
 
         expect(result.entries.length).toBe(0);
         expect(result.filesExamined.length).toBe(0);
+        expect(result.strategy).toBe('lsp');
       } finally {
         await cleanupTempDir(emptyDir);
       }
     });
 
-    test('deduplicates entries', async () => {
-      const result = await executeLens('interfaces', 'auth', {
-        projectRoot: tempDir,
-        maxFiles: 10,
-      });
-
-      // Check no duplicate file:line:symbol combinations
-      const seen = new Set<string>();
-      for (const entry of result.entries) {
-        const key = `${entry.file}:${entry.line}:${entry.symbol}`;
-        expect(seen.has(key)).toBe(false);
-        seen.add(key);
-      }
+    test('handles invalid lens name', async () => {
+      await expect(
+        executeLens('invalid-lens' as any, 'auth', { projectRoot: tempDir })
+      ).rejects.toThrow();
     });
 
-    test('sorts entries by file and line', async () => {
+    test('uses default options when not provided', async () => {
       const result = await executeLens('interfaces', 'auth', {
         projectRoot: tempDir,
-        maxFiles: 10,
       });
 
-      // Entries should be sorted
-      for (let i = 1; i < result.entries.length; i++) {
-        const prev = result.entries[i - 1];
-        const curr = result.entries[i];
-
-        const fileCompare = prev.file.localeCompare(curr.file);
-        if (fileCompare === 0) {
-          expect(prev.line).toBeLessThanOrEqual(curr.line);
-        }
-      }
+      // Should work with defaults
+      expect(result).toBeDefined();
+      expect(result.strategy).toBe('lsp');
     });
   });
 });
@@ -517,6 +439,22 @@ describe('executeLenses', () => {
 
     for (const result of results) {
       expect(result.focus).toBe('auth');
+    }
+  });
+
+  test('all results have lsp strategy', async () => {
+    const results = await executeLenses(
+      ['interfaces', 'flows', 'boundaries', 'contracts', 'trust-zones'],
+      'auth',
+      { projectRoot: tempDir, maxFiles: 20 }
+    );
+
+    expect(results.length).toBe(5);
+
+    for (const result of results) {
+      expect(result.strategy).toBe('lsp');
+      expect(Array.isArray(result.entries)).toBe(true);
+      expect(Array.isArray(result.filesExamined)).toBe(true);
     }
   });
 
@@ -581,7 +519,7 @@ describe('getLanguageForFile', () => {
 // Integration Tests
 // =============================================================================
 
-describe('Integration: Full exploration workflow', () => {
+describe('Integration: Structure compatibility', () => {
   let tempDir: string;
 
   beforeEach(async () => {
@@ -595,31 +533,7 @@ describe('Integration: Full exploration workflow', () => {
     await cleanupTempDir(tempDir);
   });
 
-  test('complete exploration: multiple lenses on same codebase', async () => {
-    // Run all lenses
-    const results = await executeLenses(
-      ['interfaces', 'flows', 'boundaries', 'contracts', 'trust-zones'],
-      'auth',
-      { projectRoot: tempDir, maxFiles: 20 }
-    );
-
-    expect(results.length).toBe(5);
-
-    // Each lens should have completed successfully
-    for (const result of results) {
-      expect(result.strategy).toBe('lsp-simulated');
-      expect(result.focus).toBe('auth');
-      expect(Array.isArray(result.entries)).toBe(true);
-      expect(Array.isArray(result.filesExamined)).toBe(true);
-    }
-
-    // Interfaces lens should find type definitions
-    const interfacesResult = results.find((r) => r.lens === 'interfaces');
-    expect(interfacesResult).toBeDefined();
-    expect(interfacesResult?.entries.length).toBeGreaterThan(0);
-  });
-
-  test('exploration results can be used for report generation', async () => {
+  test('result structure is compatible with report generator', async () => {
     const result = await executeLens('interfaces', 'auth', {
       projectRoot: tempDir,
       maxFiles: 20,
@@ -630,70 +544,20 @@ describe('Integration: Full exploration workflow', () => {
     expect(result.focus).toBeDefined();
     expect(result.filesExamined).toBeDefined();
     expect(result.entries).toBeDefined();
+    expect(result.strategy).toBe('lsp');
+    expect(result.truncated).toBe(false);
+  });
 
-    // Each entry should have enough info for report generation
-    for (const entry of result.entries) {
-      expect(entry.symbol).toBeTruthy();
-      expect(entry.kind).toBeTruthy();
-      expect(entry.file).toBeTruthy();
-      expect(entry.line).toBeGreaterThan(0);
+  test('result can be used to determine fallback is needed', async () => {
+    const result = await executeLens('interfaces', 'auth', {
+      projectRoot: tempDir,
+      maxFiles: 20,
+    });
+
+    // Empty entries indicate caller should use two-phase workflow or fallback
+    if (result.entries.length === 0 && !isLspAvailable()) {
+      // This is the expected behavior - caller should use alternative
+      expect(result.warnings).toBeDefined();
     }
-  });
-});
-
-// =============================================================================
-// Error Handling Tests
-// =============================================================================
-
-describe('Error handling', () => {
-  let tempDir: string;
-
-  beforeEach(async () => {
-    tempDir = await createTempDir();
-  });
-
-  afterEach(async () => {
-    await cleanupTempDir(tempDir);
-  });
-
-  test('handles files with syntax errors gracefully', async () => {
-    // Create a file with invalid syntax
-    await createTestFile(
-      tempDir,
-      'src/broken.ts',
-      'export interface Broken { unclosed'
-    );
-
-    const result = await executeLens('interfaces', 'broken', {
-      projectRoot: tempDir,
-      maxFiles: 10,
-    });
-
-    // Should not throw, just may not extract symbols
-    expect(result).toBeDefined();
-    expect(result.strategy).toBe('lsp-simulated');
-  });
-
-  test('handles focus in empty subdirectory gracefully', async () => {
-    await createTestFile(tempDir, 'src/auth/types.ts', SAMPLE_INTERFACE_FILE);
-
-    // Create an empty subdirectory
-    await fs.mkdir(path.join(tempDir, 'src/empty'), { recursive: true });
-
-    // Search in the empty subdirectory specifically
-    const result = await executeLens('interfaces', 'empty', {
-      projectRoot: tempDir,
-      maxFiles: 10,
-    });
-
-    // May find files due to broad glob patterns, but specific focus may yield no results
-    expect(result).toBeDefined();
-    expect(result.strategy).toBe('lsp-simulated');
-  });
-
-  test('handles invalid lens name', async () => {
-    await expect(
-      executeLens('invalid-lens' as any, 'auth', { projectRoot: tempDir })
-    ).rejects.toThrow();
   });
 });
