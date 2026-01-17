@@ -44,6 +44,25 @@ function jsonResponse(data: unknown): { content: Array<{ type: 'text'; text: str
 }
 
 /**
+ * Generate a unique worker name by appending a numeric suffix if needed.
+ *
+ * @param baseName - The desired base name (e.g., "opus-worker")
+ * @param workers - Map of existing workers
+ * @returns Unique name (e.g., "opus-worker" or "opus-worker-1", "opus-worker-2", etc.)
+ */
+function generateUniqueName(baseName: string, workers: Map<string, Worker>): string {
+  if (!workers.has(baseName)) {
+    return baseName;
+  }
+
+  let suffix = 1;
+  while (workers.has(`${baseName}-${suffix}`)) {
+    suffix++;
+  }
+  return `${baseName}-${suffix}`;
+}
+
+/**
  * Internal helper to assign a task to a polling worker.
  *
  * Marks the task as pending and the worker will receive it when they call poll_task().
@@ -445,33 +464,25 @@ export function createClaudeBusServer(): {
     'Register a worker with the bus (for polling-based dispatch)',
     { name: z.string().describe('The worker name (e.g., z.ai1)') },
     async ({ name }: { name: string }) => {
-      const existing = state.workers.get(name);
+      // Generate unique name (may append suffix if name already taken)
+      const uniqueName = generateUniqueName(name, state.workers);
 
-      if (existing) {
-        const response: RegisterWorkerResponse = {
-          success: true,
-          worker: name,
-          message: 'Already registered',
-        };
-        return jsonResponse(response);
-      }
-
-      // Create a new worker
+      // Create a new worker with the unique name
       const now = Date.now();
       const worker: Worker = {
-        name,
+        name: uniqueName,
         status: 'idle',
         registered_at: now,
         last_activity: now,
         current_task: null,
         task_started_at: null,
       };
-      state.workers.set(name, worker);
+      state.workers.set(uniqueName, worker);
 
       const response: RegisterWorkerResponse = {
         success: true,
-        worker: name,
-        message: 'Registered',
+        worker: uniqueName,
+        message: uniqueName === name ? 'Registered' : `Registered as ${uniqueName}`,
       };
       return jsonResponse(response);
     }
@@ -685,19 +696,22 @@ export function createClaudeBusServer(): {
 
       case 'register_worker': {
         const name = args.name as string;
-        if (state.workers.has(name)) {
-          return { success: true, worker: name, message: 'Already registered' };
-        }
+        // Generate unique name (may append suffix if name already taken)
+        const uniqueName = generateUniqueName(name, state.workers);
         const now = Date.now();
-        state.workers.set(name, {
-          name,
+        state.workers.set(uniqueName, {
+          name: uniqueName,
           status: 'idle',
           registered_at: now,
           last_activity: now,
           current_task: null,
           task_started_at: null,
         });
-        return { success: true, worker: name, message: 'Registered' };
+        return {
+          success: true,
+          worker: uniqueName,
+          message: uniqueName === name ? 'Registered' : `Registered as ${uniqueName}`,
+        };
       }
 
       case 'poll_task': {

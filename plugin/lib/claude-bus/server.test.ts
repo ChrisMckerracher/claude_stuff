@@ -171,27 +171,26 @@ describe('register_worker tool', () => {
     });
   });
 
-  describe('already registered worker', () => {
-    it('should return success with "Already registered" message', () => {
+  describe('duplicate worker name handling', () => {
+    it('should assign unique name with suffix when name already exists', () => {
       const { state } = createClaudeBusServer();
       const workerName = 'z.ai1';
 
+      // First worker takes the base name
       state.workers.set(workerName, createWorker(workerName, 'idle'));
 
-      const alreadyExists = state.workers.has(workerName);
-      expect(alreadyExists).toBe(true);
-
+      // When a second worker tries to register with same name, it should get a suffix
       const expectedResponse = {
         success: true,
-        worker: workerName,
-        message: 'Already registered',
+        worker: `${workerName}-1`,
+        message: `Registered as ${workerName}-1`,
       };
 
       expect(expectedResponse.success).toBe(true);
-      expect(expectedResponse.message).toBe('Already registered');
+      expect(expectedResponse.worker).toBe(`${workerName}-1`);
     });
 
-    it('should not overwrite existing worker state', () => {
+    it('should not overwrite existing worker state when registering duplicate', () => {
       const { state } = createClaudeBusServer();
       const workerName = 'z.ai1';
       const originalTimestamp = Date.now() - 10000;
@@ -199,6 +198,7 @@ describe('register_worker tool', () => {
       const worker = createWorker(workerName, 'polling', originalTimestamp);
       state.workers.set(workerName, worker);
 
+      // Original worker should be unchanged
       const existingWorker = state.workers.get(workerName);
       expect(existingWorker?.registered_at).toBe(originalTimestamp - 10000);
       expect(existingWorker?.status).toBe('polling');
@@ -707,6 +707,17 @@ describe('callTool dispatcher', () => {
     jest.useFakeTimers();
     mockBeads.validateBead.mockReturnValue({ valid: true });
     mockBeads.beadSetInProgress.mockReturnValue(undefined);
+    // Use real selectWorker implementation for callTool integration tests
+    mockSelection.selectWorker.mockImplementation((workers: Map<string, any>) => {
+      const available = Array.from(workers.values()).filter(
+        (w: any) => w.status === 'idle' || w.status === 'polling'
+      );
+      if (available.length === 0) return null;
+      const polling = available.filter((w: any) => w.status === 'polling');
+      const idle = available.filter((w: any) => w.status === 'idle');
+      const pool = polling.length > 0 ? polling : idle;
+      return pool.sort((a: any, b: any) => a.last_activity - b.last_activity)[0] ?? null;
+    });
   });
 
   afterEach(() => {
@@ -735,21 +746,62 @@ describe('callTool dispatcher', () => {
       expect(state.workers.get(workerName)?.status).toBe('idle');
     });
 
-    it('should return already registered for existing worker', async () => {
+    it('should assign unique name when registering duplicate worker name', async () => {
       const { callTool, state } = createClaudeBusServer();
-      const workerName = 'existing-worker';
+      const workerName = 'opus-worker';
 
-      // First registration
-      await callTool('register_worker', { name: workerName });
-
-      // Second registration
-      const result = await callTool('register_worker', { name: workerName });
-
-      expect(result).toEqual({
+      // First registration - gets base name
+      const result1 = await callTool('register_worker', { name: workerName });
+      expect(result1).toEqual({
         success: true,
         worker: workerName,
-        message: 'Already registered',
+        message: 'Registered',
       });
+
+      // Second registration - gets suffix -1
+      const result2 = await callTool('register_worker', { name: workerName });
+      expect(result2).toEqual({
+        success: true,
+        worker: `${workerName}-1`,
+        message: `Registered as ${workerName}-1`,
+      });
+
+      // Third registration - gets suffix -2
+      const result3 = await callTool('register_worker', { name: workerName });
+      expect(result3).toEqual({
+        success: true,
+        worker: `${workerName}-2`,
+        message: `Registered as ${workerName}-2`,
+      });
+
+      // Verify all three workers exist
+      expect(state.workers.size).toBe(3);
+      expect(state.workers.has(workerName)).toBe(true);
+      expect(state.workers.has(`${workerName}-1`)).toBe(true);
+      expect(state.workers.has(`${workerName}-2`)).toBe(true);
+    });
+
+    it('should allow workers to use their assigned unique names for subsequent calls', async () => {
+      const { callTool, state } = createClaudeBusServer();
+      const baseName = 'worker';
+
+      // Register two workers with same base name
+      const result1 = (await callTool('register_worker', { name: baseName })) as any;
+      const result2 = (await callTool('register_worker', { name: baseName })) as any;
+
+      const worker1Name = result1.worker;
+      const worker2Name = result2.worker;
+
+      expect(worker1Name).toBe('worker');
+      expect(worker2Name).toBe('worker-1');
+
+      // Submit tasks to both workers
+      await callTool('submit_task', { bead_id: 'task-a' });
+      await callTool('submit_task', { bead_id: 'task-b' });
+
+      // Both workers should have pending tasks
+      expect(state.pendingTasks.has(worker1Name) || state.workers.get(worker1Name)?.current_task).toBeTruthy();
+      expect(state.pendingTasks.has(worker2Name) || state.workers.get(worker2Name)?.current_task).toBeTruthy();
     });
   });
 
