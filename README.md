@@ -42,7 +42,7 @@ This plugin provides:
 - **Invisible Task Tracking** - Beads infrastructure hidden from user (you see "tasks", not `bd` commands)
 - **GitLab Integration** - Pull MR comments, push MRs, sync feedback
 - **Quality Gates** - Automatic security and code review hooks
-- **15 Commands** - Direct agent invocation and workflow management
+- **16 Commands** - Direct agent invocation and workflow management
 
 ---
 
@@ -102,6 +102,7 @@ Commands invoke agents and workflows directly:
 | `/gitlab-pull-comments` | Fetch MR feedback |
 | `/gitlab-push-mr` | Create/update MR |
 | `/update-claude` | Update CLAUDE.md with feedback |
+| `/verify` | Create custom verification cycles |
 
 </details>
 
@@ -295,7 +296,7 @@ plugin/                              # <- Plugin root
 │   ├── qa.md
 │   ├── code-review.md
 │   └── security.md
-├── commands/                        # Slash commands (15 total)
+├── commands/                        # Slash commands (16 total)
 │   ├── orchestrator.md
 │   ├── architect.md
 │   ├── product.md
@@ -310,8 +311,9 @@ plugin/                              # <- Plugin root
 │   ├── dashboard.md
 │   ├── gitlab-pull-comments.md
 │   ├── gitlab-push-mr.md
-│   └── update-claude.md
-├── skills/                          # Skills (14 total)
+│   ├── update-claude.md
+│   └── verify.md
+├── skills/                          # Skills (17 total)
 │   ├── architect/SKILL.md
 │   ├── product/SKILL.md
 │   ├── code/SKILL.md
@@ -325,7 +327,10 @@ plugin/                              # <- Plugin root
 │   ├── rebalance/SKILL.md
 │   ├── gitlab-pull-comments/SKILL.md
 │   ├── gitlab-push-mr/SKILL.md
-│   └── update-claude/SKILL.md
+│   ├── gitlab-stack/SKILL.md         # Stacked MR workflows
+│   ├── task-complete/SKILL.md        # Task completion automation
+│   ├── update-claude/SKILL.md
+│   └── verify/SKILL.md               # Custom verification cycles
 ├── lib/                             # TypeScript utilities
 │   └── spelunk/                     # Spelunk implementation
 │       ├── persistence.ts           # Write docs, hash computation
