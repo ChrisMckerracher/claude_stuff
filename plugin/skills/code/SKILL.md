@@ -106,3 +106,42 @@ task-complete.sh claude_stuff-abc.1
 # git commit
 # task-complete.sh claude_stuff-abc.1  # Re-run
 ```
+
+## Bus Worker Mode
+
+When running as a claude-bus worker (detected via session hook), the skill includes additional steps for task coordination.
+
+### Worker Task Flow
+
+1. **Acknowledge task receipt** before starting:
+   ```
+   ack_task(worker_name, bead_id)
+   ```
+
+2. **Execute task** using standard TDD workflow
+
+3. **Signal completion** when done:
+   ```
+   worker_done(bead_id)
+   ```
+
+4. **Spawn background poller** to continue receiving tasks:
+   ```
+   Task({
+     subagent_type: "general-purpose",
+     run_in_background: true,
+     prompt: "You are bus worker '<worker_name>'. Continue polling for tasks.
+              Call poll_task('<worker_name>', 30000) to wait for the next task.
+              When you receive a task, call ack_task and execute /agent-ecosystem:code <bead_id>.
+              After completion, call worker_done and spawn another background poller."
+   })
+   ```
+
+This keeps the main session free for human interaction while the background agent waits for work.
+
+### Why Background Continuation?
+
+- Main session stays interactive for the human
+- Worker remains available in the bus pool
+- No manual intervention needed between tasks
+- Clean separation of concerns

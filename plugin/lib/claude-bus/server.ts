@@ -26,11 +26,15 @@ import type {
   ResetWorkerResponse,
   RetryTaskResponse,
   TaskFailedResponse,
+  PendingTask,
+  RegisterWorkerResponse,
+  PollTaskResponse,
+  AckTaskResponse,
 } from './types.js';
 import { createState } from './types.js';
 import { discoverWorkers } from './tmux.js';
 import { validateBead, beadSetInProgress, beadMarkBlocked } from './beads.js';
-import { selectWorker } from './selection.js';
+import { selectWorker, isPollingWorker } from './selection.js';
 import { dispatchToWorker, verifyPaneExists } from './dispatch.js';
 import { startIpcServer, type IpcRequest, type IpcResponse } from './ipc.js';
 
@@ -171,31 +175,82 @@ export function createClaudeBusServer(): { server: McpServer; state: State } {
         return jsonResponse(response);
       }
 
-      // Refresh worker list
+      // Refresh worker list (tmux discovery)
       discoverWorkers(state.workers);
 
-      // Select LRU available worker
+      // Select LRU available worker (prefers polling workers)
       const worker = selectWorker(state.workers);
 
       if (worker) {
-        try {
-          dispatchTaskToWorker(state, worker, bead_id);
+        // Check if this is a polling worker that's currently blocked
+        const blockedPoller = state.blockedPollers.get(worker.pane_title);
+
+        if (blockedPoller && isPollingWorker(worker)) {
+          // Polling worker: resolve their blocked poll immediately
+          const pendingTask: PendingTask = {
+            bead_id,
+            assigned_at: Date.now(),
+          };
+
+          // Track active bead for dedup
+          state.activeBeads.add(bead_id);
+
+          // Store pending task for ack verification
+          state.pendingTasks.set(worker.pane_title, pendingTask);
+
+          // Transition worker to pending state (waiting for ack)
+          worker.status = 'pending';
+          worker.available_since = null;
+
+          // Resolve the blocked poller - this unblocks their poll_task call
+          blockedPoller.resolve(pendingTask);
+
           const response: SubmitTaskResponse = {
             dispatched: true,
             worker: worker.pane_title,
             bead_id,
           };
           return jsonResponse(response);
-        } catch (e) {
-          const response: SubmitTaskResponse = {
-            dispatched: false,
-            error: `Dispatch failed: ${e instanceof Error ? e.message : String(e)}`,
-            bead_id,
-          };
-          return jsonResponse(response);
         }
+
+        // Legacy worker or polling worker not currently blocked: use tmux dispatch
+        if (!isPollingWorker(worker)) {
+          try {
+            dispatchTaskToWorker(state, worker, bead_id);
+            const response: SubmitTaskResponse = {
+              dispatched: true,
+              worker: worker.pane_title,
+              bead_id,
+            };
+            return jsonResponse(response);
+          } catch (e) {
+            const response: SubmitTaskResponse = {
+              dispatched: false,
+              error: `Dispatch failed: ${e instanceof Error ? e.message : String(e)}`,
+              bead_id,
+            };
+            return jsonResponse(response);
+          }
+        }
+
+        // Polling worker not currently blocked: queue task for their next poll
+        const pendingTask: PendingTask = {
+          bead_id,
+          assigned_at: Date.now(),
+        };
+        state.activeBeads.add(bead_id);
+        state.pendingTasks.set(worker.pane_title, pendingTask);
+        worker.status = 'pending';
+        worker.available_since = null;
+
+        const response: SubmitTaskResponse = {
+          dispatched: true,
+          worker: worker.pane_title,
+          bead_id,
+        };
+        return jsonResponse(response);
       } else {
-        // No worker available - queue the task
+        // No worker available - queue the task (legacy queue)
         state.activeBeads.add(bead_id);
         state.taskQueue.push(bead_id);
         const response: SubmitTaskResponse = {
@@ -233,7 +288,13 @@ export function createClaudeBusServer(): { server: McpServer; state: State } {
       }
 
       // Mark worker available (bead already closed by worker)
-      worker.status = 'available';
+      // Use appropriate state based on worker type
+      if (isPollingWorker(worker)) {
+        worker.status = 'idle';  // Polling workers go back to idle
+        worker.task_started_at = null;
+      } else {
+        worker.status = 'available';  // Legacy workers use 'available'
+      }
       worker.available_since = Date.now();
       worker.busy_since = null;
       worker.current_task = null;
@@ -255,20 +316,40 @@ export function createClaudeBusServer(): { server: McpServer; state: State } {
     'get_status',
     'Get the current status of all workers and the task queue',
     async () => {
-      // Refresh worker state before reporting
+      // Refresh worker state before reporting (tmux discovery)
+      // This adds any new tmux workers and updates existing ones
       discoverWorkers(state.workers);
 
-      const response: GetStatusResponse = {
-        workers: Array.from(state.workers.values()).map((w) => ({
+      // Build hybrid worker list (both tmux-discovered and self-registered)
+      const workers = Array.from(state.workers.values()).map((w) => {
+        // Determine source: polling workers have registered_at set
+        const source: 'tmux' | 'polling' = isPollingWorker(w) ? 'polling' : 'tmux';
+
+        // Get pending task for this worker (if any)
+        const pending = state.pendingTasks.get(w.pane_title);
+
+        return {
           name: w.pane_title,
           status: w.status,
           current_task: w.current_task,
           idle_seconds: w.available_since
             ? Math.floor((Date.now() - w.available_since) / 1000)
             : null,
-        })),
+          source,
+          pending_task: pending?.bead_id ?? null,
+        };
+      });
+
+      // Count polling statistics
+      const pollingWorkers = Array.from(state.blockedPollers.keys()).length;
+      const pendingWorkers = state.pendingTasks.size;
+
+      const response: GetStatusResponse = {
+        workers,
         queued_tasks: state.taskQueue.length,
         queue: [...state.taskQueue],
+        polling_workers: pollingWorkers,
+        pending_workers: pendingWorkers,
       };
       return jsonResponse(response);
     }
@@ -412,7 +493,13 @@ export function createClaudeBusServer(): { server: McpServer; state: State } {
       );
 
       if (worker) {
-        worker.status = 'available';
+        // Use appropriate state based on worker type
+        if (isPollingWorker(worker)) {
+          worker.status = 'idle';  // Polling workers go back to idle
+          worker.task_started_at = null;
+        } else {
+          worker.status = 'available';  // Legacy workers use 'available'
+        }
         worker.available_since = Date.now();
         worker.busy_since = null;
         worker.current_task = null;
@@ -426,6 +513,183 @@ export function createClaudeBusServer(): { server: McpServer; state: State } {
         bead_id,
         status: 'blocked',
         reason,
+      };
+      return jsonResponse(response);
+    }
+  );
+
+  // ─── register_worker (polling system) ────────────────────────────────
+  (server.tool as Function)(
+    'register_worker',
+    'Register a worker with the bus (for polling-based dispatch)',
+    { name: z.string().describe('The worker name (e.g., z.ai1)') },
+    async ({ name }: { name: string }) => {
+      const existing = state.workers.get(name);
+
+      if (existing) {
+        const response: RegisterWorkerResponse = {
+          success: true,
+          worker: name,
+          message: 'Already registered',
+        };
+        return jsonResponse(response);
+      }
+
+      // Create a new self-registered worker (no pane_id since not tmux-discovered)
+      const worker: Worker = {
+        pane_id: '',  // Empty for self-registered workers
+        pane_title: name,
+        status: 'idle',  // Extended state: just registered, not yet polling
+        available_since: Date.now(),
+        busy_since: null,
+        current_task: null,
+        registered_at: Date.now(),  // Mark as polling worker
+      };
+      state.workers.set(name, worker);
+
+      const response: RegisterWorkerResponse = {
+        success: true,
+        worker: name,
+        message: 'Registered',
+      };
+      return jsonResponse(response);
+    }
+  );
+
+  // ─── poll_task (polling system) ──────────────────────────────────────
+  (server.tool as Function)(
+    'poll_task',
+    'Long-poll for a task assignment (blocks until task or timeout)',
+    {
+      name: z.string().describe('The worker name'),
+      timeout_ms: z.number().optional().describe('Timeout in milliseconds (default: 30000)'),
+    },
+    async ({ name, timeout_ms }: { name: string; timeout_ms?: number }) => {
+      const timeout = timeout_ms ?? 30000;
+      const worker = state.workers.get(name);
+
+      if (!worker) {
+        const response: PollTaskResponse = {
+          error: `Unknown worker: ${name} - call register_worker first`,
+        };
+        return jsonResponse(response);
+      }
+
+      // Check if task already pending for this worker
+      const pending = state.pendingTasks.get(name);
+      if (pending) {
+        const response: PollTaskResponse = {
+          task: {
+            bead_id: pending.bead_id,
+            assigned_at: pending.assigned_at,
+          },
+        };
+        return jsonResponse(response);
+      }
+
+      // Mark worker as polling (extended state: actively waiting for task)
+      worker.status = 'polling';
+      worker.available_since = Date.now();
+
+      // Block until task or timeout
+      return new Promise<{ content: Array<{ type: 'text'; text: string }> }>((resolve) => {
+        const timeoutId = setTimeout(() => {
+          state.blockedPollers.delete(name);
+          const response: PollTaskResponse = {
+            task: null,
+            timeout: true,
+          };
+          resolve(jsonResponse(response));
+        }, timeout);
+
+        state.blockedPollers.set(name, {
+          resolve: (task: PendingTask | null) => {
+            clearTimeout(timeoutId);
+            state.blockedPollers.delete(name);
+            if (task) {
+              const response: PollTaskResponse = {
+                task: {
+                  bead_id: task.bead_id,
+                  assigned_at: task.assigned_at,
+                },
+              };
+              resolve(jsonResponse(response));
+            } else {
+              const response: PollTaskResponse = {
+                task: null,
+                timeout: true,
+              };
+              resolve(jsonResponse(response));
+            }
+          },
+          timeout_id: timeoutId,
+        });
+      });
+    }
+  );
+
+  // ─── ack_task (polling system) ───────────────────────────────────────
+  (server.tool as Function)(
+    'ack_task',
+    'Acknowledge receipt of a task before execution',
+    {
+      name: z.string().describe('The worker name'),
+      bead_id: z.string().describe('The bead ID being acknowledged'),
+    },
+    async ({ name, bead_id }: { name: string; bead_id: string }) => {
+      const worker = state.workers.get(name);
+
+      if (!worker) {
+        const response: AckTaskResponse = {
+          success: false,
+          error: `Unknown worker: ${name}`,
+        };
+        return jsonResponse(response);
+      }
+
+      // Verify the task matches what was assigned
+      const pending = state.pendingTasks.get(name);
+      if (!pending || pending.bead_id !== bead_id) {
+        const response: AckTaskResponse = {
+          success: false,
+          error: `Task mismatch: expected ${pending?.bead_id ?? 'none'}, got ${bead_id}`,
+        };
+        return jsonResponse(response);
+      }
+
+      // Transition worker to executing state (extended state for polling workers)
+      worker.status = 'executing';
+      worker.available_since = null;
+      worker.busy_since = Date.now();
+      worker.current_task = bead_id;
+      worker.task_started_at = Date.now();
+
+      // Remove from pending (now executing)
+      state.pendingTasks.delete(name);
+
+      // Mark bead as in_progress
+      try {
+        beadSetInProgress(bead_id);
+      } catch (e) {
+        // Rollback on failure
+        worker.status = 'idle';  // Reset to idle, not available (polling worker)
+        worker.available_since = Date.now();
+        worker.busy_since = null;
+        worker.current_task = null;
+        worker.task_started_at = null;
+        state.activeBeads.delete(bead_id);
+
+        const response: AckTaskResponse = {
+          success: false,
+          error: `Failed to update bead status: ${e instanceof Error ? e.message : String(e)}`,
+        };
+        return jsonResponse(response);
+      }
+
+      const response: AckTaskResponse = {
+        success: true,
+        worker: name,
+        bead_id,
       };
       return jsonResponse(response);
     }
@@ -471,7 +735,13 @@ function createIpcHandler(
         }
 
         // Mark worker available (bead already closed by worker)
-        worker.status = 'available';
+        // Use appropriate state based on worker type
+        if (isPollingWorker(worker)) {
+          worker.status = 'idle';  // Polling workers go back to idle
+          worker.task_started_at = null;
+        } else {
+          worker.status = 'available';  // Legacy workers use 'available'
+        }
         worker.available_since = Date.now();
         worker.busy_since = null;
         worker.current_task = null;
@@ -512,7 +782,13 @@ function createIpcHandler(
         );
 
         if (failedWorker) {
-          failedWorker.status = 'available';
+          // Use appropriate state based on worker type
+          if (isPollingWorker(failedWorker)) {
+            failedWorker.status = 'idle';  // Polling workers go back to idle
+            failedWorker.task_started_at = null;
+          } else {
+            failedWorker.status = 'available';  // Legacy workers use 'available'
+          }
           failedWorker.available_since = Date.now();
           failedWorker.busy_since = null;
           failedWorker.current_task = null;

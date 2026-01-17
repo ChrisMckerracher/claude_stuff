@@ -5,31 +5,22 @@
  * against a configurable pattern. Workers are Claude Code instances
  * that can receive task dispatches.
  *
+ * This is the LEGACY discovery mechanism using tmux pane scanning.
+ * Workers discovered this way use 'available'/'busy' states for
+ * backward compatibility with the original dispatch system.
+ *
+ * The new polling system uses self-registered workers with extended
+ * states: 'idle' | 'polling' | 'pending' | 'executing'
+ *
  * See: docs/plans/architect/claude-code-bus.md
+ * See: docs/plans/architect/claude-bus-polling.md
  */
 
 import { execSync } from 'child_process';
+import type { Worker } from './selection.js';
 
-/**
- * Represents a worker pane in tmux.
- *
- * Workers are Claude Code instances that can execute tasks. They are
- * identified by their pane title matching CLAUDE_BUS_WORKER_PATTERN.
- */
-export interface Worker {
-  /** Tmux pane ID, e.g., "%4" */
-  pane_id: string;
-  /** Pane title, e.g., "z.ai1" */
-  pane_title: string;
-  /** Whether the worker is available or busy with a task */
-  status: 'available' | 'busy';
-  /** Timestamp when worker became available (null if busy) */
-  available_since: number | null;
-  /** Timestamp when worker became busy (null if available) */
-  busy_since: number | null;
-  /** Bead ID of current task if busy (null if available) */
-  current_task: string | null;
-}
+// Re-export Worker for backward compatibility with existing imports
+export type { Worker } from './selection.js';
 
 /**
  * Default pattern for matching worker pane titles.
@@ -82,10 +73,15 @@ export function parseTmuxOutput(output: string): Array<{ pane_id: string; pane_t
 /**
  * Discover worker panes in tmux and update the worker map.
  *
+ * This is the LEGACY discovery mechanism. Workers discovered via tmux
+ * are initialized with status 'available' for backward compatibility
+ * with the original dispatch system. The new polling-based system uses
+ * self-registered workers with extended states.
+ *
  * This function:
  * 1. Runs `tmux list-panes -a -F "#{pane_id}|#{pane_title}"`
  * 2. Parses output and matches titles against the worker pattern
- * 3. Adds new workers as available
+ * 3. Adds new workers as 'available' (legacy mode)
  * 4. Removes stale workers (pane no longer exists)
  * 5. Logs warning if a stale worker had a current_task
  *
@@ -133,11 +129,14 @@ export function discoverWorkers(existingWorkers: Map<string, Worker>): Map<strin
       // Update pane_id in case it changed (pane was recreated)
       existingWorker.pane_id = pane_id;
     } else {
-      // New worker discovered - add as available
+      // New worker discovered - initialize with 'available' status (legacy mode).
+      // This ensures backward compatibility with the original dispatch system.
+      // Self-registered workers in the new polling system use extended states:
+      // 'idle' | 'polling' | 'pending' | 'executing'
       const newWorker: Worker = {
         pane_id,
         pane_title,
-        status: 'available',
+        status: 'available',  // Legacy status for tmux-discovered workers
         available_since: Date.now(),
         busy_since: null,
         current_task: null,
