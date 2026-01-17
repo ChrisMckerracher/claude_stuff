@@ -696,3 +696,211 @@ describe('submit_task and poll_task integration', () => {
     });
   });
 });
+
+// ============================================================================
+// callTool Dispatcher Tests - For singleton server IPC forwarding
+// ============================================================================
+
+describe('callTool dispatcher', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.useFakeTimers();
+    mockBeads.validateBead.mockReturnValue({ valid: true });
+    mockBeads.beadSetInProgress.mockReturnValue(undefined);
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it('should return callTool function from createClaudeBusServer', () => {
+    const result = createClaudeBusServer();
+    expect(result).toHaveProperty('callTool');
+    expect(typeof result.callTool).toBe('function');
+  });
+
+  describe('register_worker via callTool', () => {
+    it('should register a worker via callTool', async () => {
+      const { callTool, state } = createClaudeBusServer();
+      const workerName = 'client-worker-1';
+
+      const result = await callTool('register_worker', { name: workerName });
+
+      expect(result).toEqual({
+        success: true,
+        worker: workerName,
+        message: 'Registered',
+      });
+      expect(state.workers.has(workerName)).toBe(true);
+      expect(state.workers.get(workerName)?.status).toBe('idle');
+    });
+
+    it('should return already registered for existing worker', async () => {
+      const { callTool, state } = createClaudeBusServer();
+      const workerName = 'existing-worker';
+
+      // First registration
+      await callTool('register_worker', { name: workerName });
+
+      // Second registration
+      const result = await callTool('register_worker', { name: workerName });
+
+      expect(result).toEqual({
+        success: true,
+        worker: workerName,
+        message: 'Already registered',
+      });
+    });
+  });
+
+  describe('get_status via callTool', () => {
+    it('should return status with registered workers', async () => {
+      const { callTool, state } = createClaudeBusServer();
+
+      // Register some workers
+      await callTool('register_worker', { name: 'worker-1' });
+      await callTool('register_worker', { name: 'worker-2' });
+
+      const result = (await callTool('get_status', {})) as any;
+
+      expect(result.workers).toHaveLength(2);
+      expect(result.workers.map((w: any) => w.name)).toContain('worker-1');
+      expect(result.workers.map((w: any) => w.name)).toContain('worker-2');
+      expect(result.queued_tasks).toBe(0);
+    });
+  });
+
+  describe('submit_task via callTool', () => {
+    it('should queue task when no workers available', async () => {
+      const { callTool, state } = createClaudeBusServer();
+
+      const result = (await callTool('submit_task', { bead_id: 'task-1' })) as any;
+
+      expect(result.dispatched).toBe(false);
+      expect(result.queued).toBe(true);
+      expect(result.bead_id).toBe('task-1');
+      expect(state.taskQueue).toContain('task-1');
+    });
+
+    it('should dispatch to available worker', async () => {
+      const { callTool, state } = createClaudeBusServer();
+
+      // Register a worker
+      await callTool('register_worker', { name: 'worker-1' });
+
+      // Submit task
+      const result = (await callTool('submit_task', { bead_id: 'task-1' })) as any;
+
+      expect(result.dispatched).toBe(true);
+      expect(result.worker).toBe('worker-1');
+      expect(result.bead_id).toBe('task-1');
+    });
+  });
+
+  describe('ack_task via callTool', () => {
+    it('should acknowledge task and update worker status', async () => {
+      const { callTool, state } = createClaudeBusServer();
+      const workerName = 'worker-1';
+      const beadId = 'task-1';
+
+      // Register worker and submit task
+      await callTool('register_worker', { name: workerName });
+      await callTool('submit_task', { bead_id: beadId });
+
+      // Acknowledge task
+      const result = (await callTool('ack_task', {
+        name: workerName,
+        bead_id: beadId,
+      })) as any;
+
+      expect(result.success).toBe(true);
+      expect(result.worker).toBe(workerName);
+      expect(result.bead_id).toBe(beadId);
+      expect(state.workers.get(workerName)?.status).toBe('executing');
+      expect(state.workers.get(workerName)?.current_task).toBe(beadId);
+    });
+  });
+
+  describe('worker_done via callTool', () => {
+    it('should mark worker as idle after task completion', async () => {
+      const { callTool, state } = createClaudeBusServer();
+      const workerName = 'worker-1';
+      const beadId = 'task-1';
+
+      // Setup: register, submit, ack
+      await callTool('register_worker', { name: workerName });
+      await callTool('submit_task', { bead_id: beadId });
+      await callTool('ack_task', { name: workerName, bead_id: beadId });
+
+      expect(state.workers.get(workerName)?.status).toBe('executing');
+
+      // Complete task
+      const result = (await callTool('worker_done', { bead_id: beadId })) as any;
+
+      expect(result.success).toBe(true);
+      expect(result.worker).toBe(workerName);
+      expect(state.workers.get(workerName)?.status).toBe('idle');
+      expect(state.workers.get(workerName)?.current_task).toBeNull();
+    });
+  });
+
+  describe('multiple clients sharing state', () => {
+    it('should share state between multiple callTool invocations', async () => {
+      // This simulates multiple clients calling through IPC to the same server
+      const { callTool, state } = createClaudeBusServer();
+
+      // "Client A" registers a worker
+      await callTool('register_worker', { name: 'client-a-worker' });
+
+      // "Client B" registers another worker
+      await callTool('register_worker', { name: 'client-b-worker' });
+
+      // "Client C" gets status and sees both workers
+      const status = (await callTool('get_status', {})) as any;
+
+      expect(status.workers).toHaveLength(2);
+      expect(status.workers.map((w: any) => w.name)).toContain('client-a-worker');
+      expect(status.workers.map((w: any) => w.name)).toContain('client-b-worker');
+    });
+
+    it('should maintain consistent state across tool operations', async () => {
+      const { callTool, state } = createClaudeBusServer();
+
+      // Multiple workers register
+      await callTool('register_worker', { name: 'worker-1' });
+      await callTool('register_worker', { name: 'worker-2' });
+
+      // Submit multiple tasks
+      await callTool('submit_task', { bead_id: 'task-a' });
+      await callTool('submit_task', { bead_id: 'task-b' });
+
+      // Check state is consistent
+      const status = (await callTool('get_status', {})) as any;
+
+      // Both tasks should be assigned to the workers (LRU)
+      const pendingOrExecuting = status.workers.filter(
+        (w: any) => w.status === 'pending' || w.current_task
+      );
+      expect(pendingOrExecuting.length).toBe(2);
+    });
+  });
+
+  describe('error handling', () => {
+    it('should throw for unknown tool', async () => {
+      const { callTool } = createClaudeBusServer();
+
+      await expect(callTool('unknown_tool', {})).rejects.toThrow('Unknown tool');
+    });
+
+    it('should return error for unknown worker on poll_task', async () => {
+      const { callTool } = createClaudeBusServer();
+
+      const result = (await callTool('poll_task', {
+        name: 'nonexistent',
+        timeout_ms: 100,
+      })) as any;
+
+      expect(result.error).toContain('Unknown worker');
+    });
+  });
+});
