@@ -1,6 +1,12 @@
 {
   "version": 1,
   "docs": {
+    "contracts/mcp-tool-name-validation.md": {
+      "generated": "2026-01-17T00:00:00Z",
+      "source_files": {
+        "plugin/lib/claude-bus/server.ts": "69ad4a11"
+      }
+    },
     "flows/codebase-overview.md": {
       "generated": "2026-01-10T18:30:00Z",
       "source_files": {
