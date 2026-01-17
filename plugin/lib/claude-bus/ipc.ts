@@ -13,13 +13,12 @@
 
 import * as net from 'net';
 import * as fs from 'fs';
-import * as path from 'path';
 import * as crypto from 'crypto';
 
 /**
  * IPC message types
  */
-export type IpcMessageType = 'worker_done' | 'task_failed' | 'ping';
+export type IpcMessageType = 'worker_done' | 'task_failed' | 'ping' | 'forward_tool';
 
 /**
  * IPC request message
@@ -28,6 +27,9 @@ export interface IpcRequest {
   type: IpcMessageType;
   bead_id?: string;
   reason?: string;
+  // For forward_tool message type
+  tool_name?: string;
+  tool_args?: Record<string, unknown>;
 }
 
 /**
@@ -40,9 +42,9 @@ export interface IpcResponse {
 }
 
 /**
- * Callback for handling IPC messages
+ * Callback for handling IPC messages (can be async)
  */
-export type IpcHandler = (request: IpcRequest) => IpcResponse;
+export type IpcHandler = (request: IpcRequest) => IpcResponse | Promise<IpcResponse>;
 
 /**
  * Get the socket path for the current project.
@@ -108,8 +110,23 @@ export function startIpcServer(
 
         try {
           const request: IpcRequest = JSON.parse(line);
-          const response = handler(request);
-          connection.write(JSON.stringify(response) + '\n');
+          // Handle async handlers
+          const maybePromise = handler(request);
+          if (maybePromise instanceof Promise) {
+            maybePromise
+              .then((response) => {
+                connection.write(JSON.stringify(response) + '\n');
+              })
+              .catch((e) => {
+                const errorResponse: IpcResponse = {
+                  success: false,
+                  error: `Handler error: ${e instanceof Error ? e.message : String(e)}`,
+                };
+                connection.write(JSON.stringify(errorResponse) + '\n');
+              });
+          } else {
+            connection.write(JSON.stringify(maybePromise) + '\n');
+          }
         } catch (e) {
           const errorResponse: IpcResponse = {
             success: false,
@@ -273,4 +290,83 @@ export async function isBusRunning(projectRoot?: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * Try to connect to an existing bus server.
+ *
+ * Used for singleton detection - if connection succeeds, there's already
+ * a server running for this codebase.
+ *
+ * @param projectRoot - Optional project root for socket path
+ * @param timeout - Connection timeout in ms (default: 1000)
+ * @returns Connected socket if server exists, null otherwise
+ */
+export async function tryConnectToServer(
+  projectRoot?: string,
+  timeout: number = 1000
+): Promise<net.Socket | null> {
+  const socketPath = getSocketPath(projectRoot);
+
+  // Check if socket exists
+  if (!fs.existsSync(socketPath)) {
+    return null;
+  }
+
+  return new Promise((resolve) => {
+    const socket = net.createConnection(socketPath);
+    let resolved = false;
+
+    const timeoutId = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        socket.destroy();
+        resolve(null);
+      }
+    }, timeout);
+
+    socket.on('connect', () => {
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timeoutId);
+        resolve(socket);
+      }
+    });
+
+    socket.on('error', () => {
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timeoutId);
+        resolve(null);
+      }
+    });
+  });
+}
+
+/**
+ * Forward an MCP tool call to the bus server via IPC.
+ *
+ * Used in client mode to proxy tool calls to the real server.
+ *
+ * @param toolName - Name of the MCP tool
+ * @param args - Tool arguments
+ * @param projectRoot - Optional project root for socket path
+ * @returns The tool response data
+ */
+export async function forwardToolCall(
+  toolName: string,
+  args: Record<string, unknown>,
+  projectRoot?: string
+): Promise<unknown> {
+  const response = await sendIpcMessage(
+    { type: 'forward_tool', tool_name: toolName, tool_args: args },
+    projectRoot,
+    60000 // 60s timeout for tool calls (some like poll_task block)
+  );
+
+  if (!response.success) {
+    throw new Error(response.error || 'Tool forwarding failed');
+  }
+
+  return response.data;
 }

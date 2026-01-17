@@ -5,6 +5,9 @@
  * Run the MCP server as a standalone process.
  * Claude Code spawns this via the mcpServers config.
  *
+ * Singleton behavior: First instance for a codebase becomes the server.
+ * Subsequent instances connect as clients and proxy MCP calls via IPC.
+ *
  * Usage:
  *   claude-bus serve              # Start the MCP server (stdio transport)
  *   claude-bus notify-done <id>   # Notify bus that a task is complete
@@ -14,18 +17,30 @@
  * @module claude-bus/cli
  */
 
-import { startServer } from './server.js';
-import { notifyWorkerDone, notifyTaskFailed, isBusRunning } from './ipc.js';
+import { startServer, startClientMode } from './server.js';
+import { notifyWorkerDone, notifyTaskFailed, isBusRunning, tryConnectToServer } from './ipc.js';
 
 const command = process.argv[2];
 
 async function main(): Promise<void> {
   switch (command) {
     case 'serve':
-    case undefined:
-      // Start the MCP server
-      await startServer();
+    case undefined: {
+      // Singleton detection: check if a server already exists for this codebase
+      const existingServer = await tryConnectToServer();
+
+      if (existingServer) {
+        // Server already running - run as client, proxying MCP calls via IPC
+        existingServer.destroy(); // Close test connection
+        console.error('[claude-bus] Server already running, starting as client');
+        await startClientMode();
+      } else {
+        // No server running - become the server
+        console.error('[claude-bus] Starting as server');
+        await startServer();
+      }
       break;
+    }
 
     case 'notify-done': {
       const beadId = process.argv[3];

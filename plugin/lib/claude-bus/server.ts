@@ -34,7 +34,7 @@ import type {
 import { createState } from './types.js';
 import { validateBead, beadSetInProgress, beadMarkBlocked } from './beads.js';
 import { selectWorker } from './selection.js';
-import { startIpcServer, type IpcRequest, type IpcResponse } from './ipc.js';
+import { startIpcServer, forwardToolCall, type IpcRequest, type IpcResponse } from './ipc.js';
 
 // Helper to create a JSON text response
 function jsonResponse(data: unknown): { content: Array<{ type: 'text'; text: string }> } {
@@ -111,9 +111,13 @@ function processQueue(state: State): void {
  * - poll_task(name, timeout_ms) - Long-poll for task assignment
  * - ack_task(name, bead_id) - Acknowledge task receipt
  *
- * @returns Object containing the configured McpServer instance and state
+ * @returns Object containing the configured McpServer instance, state, and tool dispatcher
  */
-export function createClaudeBusServer(): { server: McpServer; state: State } {
+export function createClaudeBusServer(): {
+  server: McpServer;
+  state: State;
+  callTool: (name: string, args: Record<string, unknown>) => Promise<unknown>;
+} {
   const server = new McpServer({
     name: 'claude-bus',
     version: '0.1.0',
@@ -610,7 +614,222 @@ export function createClaudeBusServer(): { server: McpServer; state: State } {
     }
   );
 
-  return { server, state };
+  // Store all tool handlers for direct invocation
+  // We need to extract the handler from the registered tools
+  // For simplicity, we'll recreate the core logic in callTool
+  const callTool = async (
+    toolName: string,
+    args: Record<string, unknown>
+  ): Promise<unknown> => {
+    // Dispatch to the appropriate tool implementation
+    switch (toolName) {
+      case 'submit_task': {
+        const bead_id = args.bead_id as string;
+        const validation = validateBead(bead_id);
+        if (!validation.valid) {
+          return { dispatched: false, error: validation.error, bead_id };
+        }
+        if (state.activeBeads.has(bead_id)) {
+          return { dispatched: false, error: 'Task already active or queued', bead_id };
+        }
+        const worker = selectWorker(state.workers);
+        if (worker) {
+          const blockedPoller = state.blockedPollers.get(worker.name);
+          if (blockedPoller) {
+            assignTaskToWorker(state, worker, bead_id);
+            blockedPoller.resolve(state.pendingTasks.get(worker.name)!);
+          } else {
+            assignTaskToWorker(state, worker, bead_id);
+          }
+          return { dispatched: true, worker: worker.name, bead_id };
+        } else {
+          state.activeBeads.add(bead_id);
+          state.taskQueue.push(bead_id);
+          return { dispatched: false, queued: true, position: state.taskQueue.length, bead_id };
+        }
+      }
+
+      case 'worker_done': {
+        const bead_id = args.bead_id as string;
+        state.activeBeads.delete(bead_id);
+        const worker = Array.from(state.workers.values()).find(w => w.current_task === bead_id);
+        if (!worker) {
+          return { success: true, bead_id, warning: 'Worker not found' };
+        }
+        worker.status = 'idle';
+        worker.last_activity = Date.now();
+        worker.current_task = null;
+        worker.task_started_at = null;
+        processQueue(state);
+        return { success: true, bead_id, worker: worker.name };
+      }
+
+      case 'get_status': {
+        const workers = Array.from(state.workers.values()).map(w => ({
+          name: w.name,
+          status: w.status,
+          current_task: w.current_task,
+          idle_seconds: (w.status === 'idle' || w.status === 'polling')
+            ? Math.floor((Date.now() - w.last_activity) / 1000)
+            : null,
+          pending_task: state.pendingTasks.get(w.name)?.bead_id ?? null,
+        }));
+        return {
+          workers,
+          queued_tasks: state.taskQueue.length,
+          queue: [...state.taskQueue],
+          polling_workers: state.blockedPollers.size,
+          pending_workers: state.pendingTasks.size,
+        };
+      }
+
+      case 'register_worker': {
+        const name = args.name as string;
+        if (state.workers.has(name)) {
+          return { success: true, worker: name, message: 'Already registered' };
+        }
+        const now = Date.now();
+        state.workers.set(name, {
+          name,
+          status: 'idle',
+          registered_at: now,
+          last_activity: now,
+          current_task: null,
+          task_started_at: null,
+        });
+        return { success: true, worker: name, message: 'Registered' };
+      }
+
+      case 'poll_task': {
+        const name = args.name as string;
+        const timeout = (args.timeout_ms as number) ?? 30000;
+        const worker = state.workers.get(name);
+        if (!worker) {
+          return { error: `Unknown worker: ${name} - call register_worker first` };
+        }
+        const pending = state.pendingTasks.get(name);
+        if (pending) {
+          return { task: { bead_id: pending.bead_id, assigned_at: pending.assigned_at } };
+        }
+        worker.status = 'polling';
+        worker.last_activity = Date.now();
+        return new Promise((resolve) => {
+          const timeoutId = setTimeout(() => {
+            state.blockedPollers.delete(name);
+            resolve({ task: null, timeout: true });
+          }, timeout);
+          state.blockedPollers.set(name, {
+            resolve: (task) => {
+              clearTimeout(timeoutId);
+              state.blockedPollers.delete(name);
+              if (task) {
+                resolve({ task: { bead_id: task.bead_id, assigned_at: task.assigned_at } });
+              } else {
+                resolve({ task: null, timeout: true });
+              }
+            },
+            timeout_id: timeoutId,
+          });
+        });
+      }
+
+      case 'ack_task': {
+        const name = args.name as string;
+        const bead_id = args.bead_id as string;
+        const worker = state.workers.get(name);
+        if (!worker) {
+          return { success: false, error: `Unknown worker: ${name}` };
+        }
+        const pending = state.pendingTasks.get(name);
+        if (!pending || pending.bead_id !== bead_id) {
+          return { success: false, error: `Task mismatch: expected ${pending?.bead_id ?? 'none'}, got ${bead_id}` };
+        }
+        worker.status = 'executing';
+        worker.last_activity = Date.now();
+        worker.current_task = bead_id;
+        worker.task_started_at = Date.now();
+        state.pendingTasks.delete(name);
+        try {
+          beadSetInProgress(bead_id);
+        } catch (e) {
+          worker.status = 'idle';
+          worker.current_task = null;
+          worker.task_started_at = null;
+          state.activeBeads.delete(bead_id);
+          return { success: false, error: `Failed to update bead: ${e instanceof Error ? e.message : String(e)}` };
+        }
+        return { success: true, worker: name, bead_id };
+      }
+
+      case 'reset_worker': {
+        const worker_name = args.worker_name as string;
+        const worker = state.workers.get(worker_name);
+        if (!worker) {
+          return { success: false, worker: worker_name, error: `Unknown worker: ${worker_name}` };
+        }
+        const previousTask = worker.current_task;
+        if (previousTask) state.activeBeads.delete(previousTask);
+        state.pendingTasks.delete(worker_name);
+        worker.status = 'idle';
+        worker.last_activity = Date.now();
+        worker.current_task = null;
+        worker.task_started_at = null;
+        processQueue(state);
+        return { success: true, worker: worker_name, previous_task: previousTask };
+      }
+
+      case 'retry_task': {
+        const bead_id = args.bead_id as string;
+        if (state.activeBeads.has(bead_id)) {
+          return { dispatched: false, error: 'Task still active - use reset_worker first', bead_id };
+        }
+        const validation = validateBead(bead_id);
+        if (!validation.valid) {
+          return { dispatched: false, error: validation.error, bead_id };
+        }
+        const worker = selectWorker(state.workers);
+        if (worker) {
+          const blockedPoller = state.blockedPollers.get(worker.name);
+          if (blockedPoller) {
+            assignTaskToWorker(state, worker, bead_id);
+            blockedPoller.resolve(state.pendingTasks.get(worker.name)!);
+          } else {
+            assignTaskToWorker(state, worker, bead_id);
+          }
+          return { dispatched: true, worker: worker.name, bead_id };
+        } else {
+          state.activeBeads.add(bead_id);
+          state.taskQueue.push(bead_id);
+          return { dispatched: false, queued: true, position: state.taskQueue.length, bead_id };
+        }
+      }
+
+      case 'task_failed': {
+        const bead_id = args.bead_id as string;
+        const reason = args.reason as string;
+        try {
+          beadMarkBlocked(bead_id, reason);
+        } catch (e) {
+          return { success: false, bead_id, error: `Failed to mark blocked: ${e instanceof Error ? e.message : String(e)}` };
+        }
+        state.activeBeads.delete(bead_id);
+        const worker = Array.from(state.workers.values()).find(w => w.current_task === bead_id);
+        if (worker) {
+          worker.status = 'idle';
+          worker.last_activity = Date.now();
+          worker.current_task = null;
+          worker.task_started_at = null;
+        }
+        processQueue(state);
+        return { success: true, bead_id, status: 'blocked', reason };
+      }
+
+      default:
+        throw new Error(`Unknown tool: ${toolName}`);
+    }
+  };
+
+  return { server, state, callTool };
 }
 
 /**
@@ -618,16 +837,31 @@ export function createClaudeBusServer(): { server: McpServer; state: State } {
  *
  * @param state - Server state to modify
  * @param processQueueFn - Function to process the task queue
+ * @param callTool - Function to call MCP tools directly
  * @returns IPC handler function
  */
 function createIpcHandler(
   state: State,
-  processQueueFn: () => void
-): (request: IpcRequest) => IpcResponse {
-  return (request: IpcRequest): IpcResponse => {
+  processQueueFn: () => void,
+  callTool: (name: string, args: Record<string, unknown>) => Promise<unknown>
+): (request: IpcRequest) => IpcResponse | Promise<IpcResponse> {
+  return (request: IpcRequest): IpcResponse | Promise<IpcResponse> => {
     switch (request.type) {
       case 'ping':
         return { success: true, data: { status: 'running' } };
+
+      case 'forward_tool': {
+        if (!request.tool_name) {
+          return { success: false, error: 'tool_name required' };
+        }
+        // Forward the tool call and return the result
+        return callTool(request.tool_name, request.tool_args || {})
+          .then((data) => ({ success: true, data }))
+          .catch((e) => ({
+            success: false,
+            error: `Tool error: ${e instanceof Error ? e.message : String(e)}`,
+          }));
+      }
 
       case 'worker_done': {
         if (!request.bead_id) {
@@ -725,19 +959,67 @@ function createIpcHandler(
  * Also starts an IPC server on a Unix socket for CLI notifications.
  */
 export async function startServer(): Promise<void> {
-  const { server, state } = createClaudeBusServer();
+  const { server, state, callTool } = createClaudeBusServer();
 
   // Create a processQueue function that uses the state
   const processQueueFn = (): void => {
     processQueue(state);
   };
 
-  // Start IPC server for CLI notifications
-  const ipcHandler = createIpcHandler(state, processQueueFn);
+  // Start IPC server for CLI notifications and tool forwarding
+  const ipcHandler = createIpcHandler(state, processQueueFn, callTool);
   const { socketPath } = startIpcServer(ipcHandler);
   console.error(`[claude-bus] IPC server listening on ${socketPath}`);
 
   // Start MCP server
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}
+
+/**
+ * Start as a client that forwards MCP calls to the real server via IPC.
+ *
+ * Used when another claude-bus instance is already running for this codebase.
+ * Creates an MCP server that proxies all tool calls to the real server.
+ */
+export async function startClientMode(): Promise<void> {
+  const server = new McpServer({
+    name: 'claude-bus-client',
+    version: '0.1.0',
+  });
+
+  // Define the same tools, but forward them via IPC
+  const tools = [
+    'submit_task',
+    'worker_done',
+    'get_status',
+    'reset_worker',
+    'retry_task',
+    'task_failed',
+    'register_worker',
+    'poll_task',
+    'ack_task',
+  ];
+
+  for (const toolName of tools) {
+    // Each tool forwards to the real server
+    (server.tool as Function)(
+      toolName,
+      `Forward ${toolName} to bus server`,
+      async (args: Record<string, unknown>) => {
+        try {
+          const result = await forwardToolCall(toolName, args);
+          return jsonResponse(result);
+        } catch (e) {
+          return jsonResponse({
+            error: `Failed to forward to server: ${e instanceof Error ? e.message : String(e)}`,
+          });
+        }
+      }
+    );
+  }
+
+  // Start MCP server with stdio transport
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
