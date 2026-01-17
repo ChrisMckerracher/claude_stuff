@@ -29,7 +29,8 @@ The `task-complete.sh` script performs the following operations in sequence:
 5. **Merges** the task branch to the epic branch (with conflict detection)
 6. **Rebases** all dependent task branches that have this task as a blocker
 7. **Closes** the task bead with reason "Merged to epic, dependents rebased"
-8. **Outputs** status JSON indicating what was merged/rebased
+8. **Notifies bus** that worker is available (via `claude-bus notify-done`)
+9. **Outputs** status JSON indicating what was merged/rebased
 
 ## Output
 
@@ -119,11 +120,31 @@ task2 completes -> task3 rebases again (now has task1 + task2 changes)
 
 Script skips that task (logged to stderr).
 
+## Bus Integration
+
+When running in a multi-worker environment with `claude-bus`, this script automatically notifies the bus that the worker is available for the next task.
+
+**Notification behavior:**
+- Non-blocking: If the bus is not running, the script logs a warning but completes successfully
+- The bus uses this to mark the worker as available in the LRU queue
+- Any queued tasks are dispatched to the now-available worker
+
+**Recovery:** If the bus notification fails, the orchestrator can recover by checking:
+```bash
+bd list --status in_progress  # Find orphaned tasks
+```
+
+**Manual notification:** If needed, you can manually notify the bus:
+```bash
+claude-bus notify-done <task_id>
+```
+
 ## Dependencies
 
 - `bd` - bead task management
 - `jq` - JSON parsing
 - `git` - version control
+- `claude-bus` - (optional) for multi-worker coordination
 
 ## Script Location
 

@@ -407,6 +407,39 @@ close_task_bead() {
 }
 
 # =============================================================================
+# BUS NOTIFICATION
+# =============================================================================
+
+notify_bus_worker_done() {
+    # Notify the claude-bus that this worker has completed its task.
+    # This is non-blocking - if the bus is not running, we log a warning
+    # but don't fail the task completion.
+    #
+    # The bus uses this notification to:
+    # 1. Mark the worker as available in LRU queue
+    # 2. Dispatch any queued tasks to the now-available worker
+
+    log_info "Notifying bus of task completion..."
+
+    # Check if claude-bus CLI is available
+    if ! command -v claude-bus &>/dev/null; then
+        log_warn "claude-bus CLI not found - skipping bus notification"
+        log_warn "Bus can recover by checking: bd list --status in_progress"
+        return 0
+    fi
+
+    # Send notification (non-blocking - don't fail if bus is unavailable)
+    if claude-bus notify-done "$TASK_ID" 2>/dev/null; then
+        log_info "Bus notified: worker available for next task"
+    else
+        log_warn "Bus notification failed (bus may not be running)"
+        log_warn "Bus can recover by checking: bd list --status in_progress"
+    fi
+
+    return 0
+}
+
+# =============================================================================
 # MAIN
 # =============================================================================
 
@@ -447,6 +480,9 @@ main() {
 
     # Close task
     close_task_bead
+
+    # Notify bus that worker is available
+    notify_bus_worker_done
 
     # Output success
     log_info "Task completion successful!"
