@@ -38,8 +38,9 @@ export interface BlockedPoller {
  */
 export interface RegisterWorkerResponse {
   success: boolean;
-  worker: string;
-  message: string;
+  worker?: string;
+  message?: string;
+  error?: string;
 }
 
 /**

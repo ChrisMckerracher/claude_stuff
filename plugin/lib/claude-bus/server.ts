@@ -44,6 +44,28 @@ function jsonResponse(data: unknown): { content: Array<{ type: 'text'; text: str
 }
 
 /**
+ * Worker name validation pattern.
+ * - Must start with alphanumeric character
+ * - Can contain letters, numbers, dots, underscores, hyphens
+ * - Length: 1-64 characters
+ */
+const WORKER_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
+
+/**
+ * Validate a worker name against the pattern.
+ * Returns an error message if invalid, or null if valid.
+ */
+function validateWorkerName(name: string): string | null {
+  if (!name || name.trim() === '') {
+    return 'Worker name is required';
+  }
+  if (!WORKER_NAME_PATTERN.test(name)) {
+    return 'Invalid worker name: must start with alphanumeric, contain only a-z, 0-9, ., _, - and be 1-64 characters';
+  }
+  return null;
+}
+
+/**
  * Generate a unique worker name by appending a numeric suffix if needed.
  *
  * @param baseName - The desired base name (e.g., "opus-worker")
@@ -462,8 +484,18 @@ export function createClaudeBusServer(): {
   (server.tool as Function)(
     'register_worker',
     'Register a worker with the bus (for polling-based dispatch)',
-    { name: z.string().describe('The worker name (e.g., z.ai1)') },
+    { name: z.string().min(1, 'Worker name is required').describe('The worker name (e.g., z.ai1)') },
     async ({ name }: { name: string }) => {
+      // Validate worker name format
+      const nameError = validateWorkerName(name);
+      if (nameError) {
+        const response: RegisterWorkerResponse = {
+          success: false,
+          error: nameError,
+        };
+        return jsonResponse(response);
+      }
+
       // Generate unique name (may append suffix if name already taken)
       const uniqueName = generateUniqueName(name, state.workers);
 
@@ -493,10 +525,19 @@ export function createClaudeBusServer(): {
     'poll_task',
     'Long-poll for a task assignment (blocks until task or timeout)',
     {
-      name: z.string().describe('The worker name'),
+      name: z.string().min(1, 'Worker name is required').describe('The worker name'),
       timeout_ms: z.number().optional().describe('Timeout in milliseconds (default: 30000)'),
     },
     async ({ name, timeout_ms }: { name: string; timeout_ms?: number }) => {
+      // Validate worker name format
+      const nameError = validateWorkerName(name);
+      if (nameError) {
+        const response: PollTaskResponse = {
+          error: nameError,
+        };
+        return jsonResponse(response);
+      }
+
       const timeout = timeout_ms ?? 30000;
       const worker = state.workers.get(name);
 
@@ -565,10 +606,20 @@ export function createClaudeBusServer(): {
     'ack_task',
     'Acknowledge receipt of a task before execution',
     {
-      name: z.string().describe('The worker name'),
+      name: z.string().min(1, 'Worker name is required').describe('The worker name'),
       bead_id: z.string().describe('The bead ID being acknowledged'),
     },
     async ({ name, bead_id }: { name: string; bead_id: string }) => {
+      // Validate worker name format
+      const nameError = validateWorkerName(name);
+      if (nameError) {
+        const response: AckTaskResponse = {
+          success: false,
+          error: nameError,
+        };
+        return jsonResponse(response);
+      }
+
       const worker = state.workers.get(name);
 
       if (!worker) {
@@ -696,6 +747,11 @@ export function createClaudeBusServer(): {
 
       case 'register_worker': {
         const name = args.name as string;
+        // Validate worker name format
+        const nameError = validateWorkerName(name);
+        if (nameError) {
+          return { success: false, error: nameError };
+        }
         // Generate unique name (may append suffix if name already taken)
         const uniqueName = generateUniqueName(name, state.workers);
         const now = Date.now();
@@ -716,6 +772,11 @@ export function createClaudeBusServer(): {
 
       case 'poll_task': {
         const name = args.name as string;
+        // Validate worker name format
+        const pollNameError = validateWorkerName(name);
+        if (pollNameError) {
+          return { error: pollNameError };
+        }
         const timeout = (args.timeout_ms as number) ?? 30000;
         const worker = state.workers.get(name);
         if (!worker) {
@@ -750,6 +811,11 @@ export function createClaudeBusServer(): {
       case 'ack_task': {
         const name = args.name as string;
         const bead_id = args.bead_id as string;
+        // Validate worker name format
+        const ackNameError = validateWorkerName(name);
+        if (ackNameError) {
+          return { success: false, error: ackNameError };
+        }
         const worker = state.workers.get(name);
         if (!worker) {
           return { success: false, error: `Unknown worker: ${name}` };

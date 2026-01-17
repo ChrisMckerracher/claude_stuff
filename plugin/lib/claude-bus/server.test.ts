@@ -6,17 +6,22 @@
  */
 
 import { createClaudeBusServer } from './server';
+import { validateBead, beadSetInProgress, beadMarkBlocked } from './beads';
+import { selectWorker } from './selection';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import * as beadsModule from './beads';
-import * as selectionModule from './selection';
 import type { Worker } from './selection';
 
-// Mock external modules
+// Mock the modules
 jest.mock('./beads');
-jest.mock('./selection');
+jest.mock('./selection', () => ({
+  ...jest.requireActual('./selection'),
+  selectWorker: jest.fn(),
+}));
 
-const mockBeads = beadsModule as jest.Mocked<typeof beadsModule>;
-const mockSelection = selectionModule as jest.Mocked<typeof selectionModule>;
+const mockValidateBead = validateBead as jest.MockedFunction<typeof validateBead>;
+const mockBeadSetInProgress = beadSetInProgress as jest.MockedFunction<typeof beadSetInProgress>;
+const mockBeadMarkBlocked = beadMarkBlocked as jest.MockedFunction<typeof beadMarkBlocked>;
+const mockSelectWorker = selectWorker as jest.MockedFunction<typeof selectWorker>;
 
 // Helper to create a worker with the new interface
 function createWorker(
@@ -41,11 +46,11 @@ describe('Claude Bus Server', () => {
     jest.clearAllMocks();
 
     // Default mock implementations
-    mockBeads.validateBead.mockReturnValue({ valid: true });
-    mockBeads.beadSetInProgress.mockReturnValue(undefined);
-    mockBeads.beadMarkBlocked.mockReturnValue(undefined);
+    mockValidateBead.mockReturnValue({ valid: true });
+    mockBeadSetInProgress.mockReturnValue(undefined);
+    mockBeadMarkBlocked.mockReturnValue(undefined);
 
-    mockSelection.selectWorker.mockReturnValue(null);
+    mockSelectWorker.mockReturnValue(null);
 
     const result = createClaudeBusServer();
     server = result.server;
@@ -78,13 +83,13 @@ describe('Claude Bus Server', () => {
 
   describe('integration wiring verification', () => {
     it('should import beads module functions', () => {
-      expect(mockBeads.validateBead).toBeDefined();
-      expect(mockBeads.beadSetInProgress).toBeDefined();
-      expect(mockBeads.beadMarkBlocked).toBeDefined();
+      expect(mockValidateBead).toBeDefined();
+      expect(mockBeadSetInProgress).toBeDefined();
+      expect(mockBeadMarkBlocked).toBeDefined();
     });
 
     it('should import selection module functions', () => {
-      expect(mockSelection.selectWorker).toBeDefined();
+      expect(mockSelectWorker).toBeDefined();
     });
   });
 
@@ -484,7 +489,7 @@ describe('submit_task and poll_task integration', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     jest.useFakeTimers();
-    mockBeads.validateBead.mockReturnValue({ valid: true });
+    mockValidateBead.mockReturnValue({ valid: true });
   });
 
   afterEach(() => {
@@ -701,14 +706,164 @@ describe('submit_task and poll_task integration', () => {
 // callTool Dispatcher Tests - For singleton server IPC forwarding
 // ============================================================================
 
+// ============================================================================
+// Worker Name Validation Tests
+// ============================================================================
+
+describe('worker name validation', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.useFakeTimers();
+    mockValidateBead.mockReturnValue({ valid: true });
+    mockBeadSetInProgress.mockReturnValue(undefined);
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  describe('register_worker name validation', () => {
+    it('should reject call with missing name parameter', async () => {
+      const { callTool } = createClaudeBusServer();
+
+      // Calling without name parameter should fail at schema level
+      const result = (await callTool('register_worker', {})) as any;
+
+      expect(result.error).toBeDefined();
+    });
+
+    it('should reject call with undefined name', async () => {
+      const { callTool } = createClaudeBusServer();
+
+      const result = (await callTool('register_worker', { name: undefined })) as any;
+
+      expect(result.error).toBeDefined();
+    });
+
+    it('should reject empty string name', async () => {
+      const { callTool } = createClaudeBusServer();
+
+      const result = (await callTool('register_worker', { name: '' })) as any;
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBeDefined();
+    });
+
+    it('should reject whitespace-only name', async () => {
+      const { callTool } = createClaudeBusServer();
+
+      const result = (await callTool('register_worker', { name: '   ' })) as any;
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBeDefined();
+    });
+
+    it('should reject name starting with non-alphanumeric', async () => {
+      const { callTool } = createClaudeBusServer();
+
+      const result = (await callTool('register_worker', { name: '-invalid' })) as any;
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Invalid worker name');
+    });
+
+    it('should reject name with invalid characters', async () => {
+      const { callTool } = createClaudeBusServer();
+
+      const result = (await callTool('register_worker', { name: 'worker@name' })) as any;
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Invalid worker name');
+    });
+
+    it('should reject name exceeding 64 characters', async () => {
+      const { callTool } = createClaudeBusServer();
+      const longName = 'a'.repeat(65);
+
+      const result = (await callTool('register_worker', { name: longName })) as any;
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Invalid worker name');
+    });
+
+    it('should accept valid alphanumeric name', async () => {
+      const { callTool } = createClaudeBusServer();
+
+      const result = (await callTool('register_worker', { name: 'worker1' })) as any;
+
+      expect(result.success).toBe(true);
+      expect(result.worker).toBe('worker1');
+    });
+
+    it('should accept valid name with dots, underscores, and hyphens', async () => {
+      const { callTool } = createClaudeBusServer();
+
+      const result = (await callTool('register_worker', { name: 'opus-worker_v2.1' })) as any;
+
+      expect(result.success).toBe(true);
+      expect(result.worker).toBe('opus-worker_v2.1');
+    });
+
+    it('should accept name at maximum length of 64 characters', async () => {
+      const { callTool } = createClaudeBusServer();
+      const maxName = 'a'.repeat(64);
+
+      const result = (await callTool('register_worker', { name: maxName })) as any;
+
+      expect(result.success).toBe(true);
+      expect(result.worker).toBe(maxName);
+    });
+  });
+
+  describe('poll_task name validation', () => {
+    it('should reject empty string name', async () => {
+      const { callTool } = createClaudeBusServer();
+
+      const result = (await callTool('poll_task', { name: '', timeout_ms: 100 })) as any;
+
+      expect(result.error).toBeDefined();
+      expect(result.error).toContain('Worker name is required');
+    });
+
+    it('should reject invalid name pattern', async () => {
+      const { callTool } = createClaudeBusServer();
+
+      const result = (await callTool('poll_task', { name: '-invalid', timeout_ms: 100 })) as any;
+
+      expect(result.error).toBeDefined();
+      expect(result.error).toContain('Invalid worker name');
+    });
+  });
+
+  describe('ack_task name validation', () => {
+    it('should reject empty string name', async () => {
+      const { callTool } = createClaudeBusServer();
+
+      const result = (await callTool('ack_task', { name: '', bead_id: 'test-bead' })) as any;
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Worker name is required');
+    });
+
+    it('should reject invalid name pattern', async () => {
+      const { callTool } = createClaudeBusServer();
+
+      const result = (await callTool('ack_task', { name: '@invalid', bead_id: 'test-bead' })) as any;
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Invalid worker name');
+    });
+  });
+});
+
 describe('callTool dispatcher', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     jest.useFakeTimers();
-    mockBeads.validateBead.mockReturnValue({ valid: true });
-    mockBeads.beadSetInProgress.mockReturnValue(undefined);
+    mockValidateBead.mockReturnValue({ valid: true });
+    mockBeadSetInProgress.mockReturnValue(undefined);
     // Use real selectWorker implementation for callTool integration tests
-    mockSelection.selectWorker.mockImplementation((workers: Map<string, any>) => {
+    mockSelectWorker.mockImplementation((workers: Map<string, any>) => {
       const available = Array.from(workers.values()).filter(
         (w: any) => w.status === 'idle' || w.status === 'polling'
       );
