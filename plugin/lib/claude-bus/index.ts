@@ -3,6 +3,11 @@
  *
  * MCP server components for multi-instance Claude Code coordination.
  *
+ * Architecture:
+ * - daemon.ts: External daemon process that owns state
+ * - client.ts: Connection management with auto-start and retry
+ * - server.ts: Thin MCP client that forwards to daemon
+ *
  * @module claude-bus
  */
 
@@ -33,17 +38,36 @@ export {
 // Re-export worker selection
 export { selectWorker } from './selection.js';
 
-// Legacy tmux discovery and dispatch functions have been removed.
-// All workers now use polling-based dispatch (register_worker + poll_task + ack_task).
-// See: docs/plans/architect/claude-bus-polling.md
+// Re-export MCP server (client mode only)
+export { startClientMode, TOOL_SCHEMAS, jsonResponse } from './server.js';
 
-// Re-export server
-export { createClaudeBusServer, startServer, TOOL_SCHEMAS } from './server.js';
-
-// Re-export IPC functions
+// Re-export client functions
 export {
+  ensureDaemon,
+  forwardToolCall,
+  isDaemonRunning as isClientConnected,
+} from './client.js';
+
+// Re-export daemon functions
+export {
+  startDaemon,
+  stopDaemon,
+  getDaemonStatus,
+  isDaemonRunning,
   getSocketPath,
-  startIpcServer,
+  getPidFilePath,
+  isSocketStale,
+  type DaemonInstance,
+  type DaemonRequest,
+  type DaemonResponse,
+  type DaemonSuccessResponse,
+  type DaemonErrorResponse,
+  type DaemonErrorCode,
+} from './daemon.js';
+
+// Re-export IPC functions (for backward compatibility)
+export {
+  getSocketPath as getIpcSocketPath,
   sendIpcMessage,
   notifyWorkerDone,
   notifyTaskFailed,
