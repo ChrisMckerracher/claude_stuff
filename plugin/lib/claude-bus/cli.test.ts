@@ -31,8 +31,8 @@ function findAllSockets(): string[] {
   try {
     const files = fs.readdirSync(tmpDir);
     return files
-      .filter((f) => socketPattern.test(f))
-      .map((f) => path.join(tmpDir, f));
+      .filter((f: string) => socketPattern.test(f))
+      .map((f: string) => path.join(tmpDir, f));
   } catch {
     return [];
   }

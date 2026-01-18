@@ -8,6 +8,7 @@
  * the daemon owns all the state and logic.
  */
 
+import { describe, it, expect } from '@jest/globals';
 import { TOOL_SCHEMAS, jsonResponse } from './server';
 
 // ============================================================================

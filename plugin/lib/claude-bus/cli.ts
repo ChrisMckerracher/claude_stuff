@@ -26,7 +26,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { startClientMode } from './server.js';
-import { ensureDaemon, forwardToolCall, isDaemonRunning as clientIsDaemonRunning } from './client.js';
+import { ensureDaemon, forwardToolCall } from './client.js';
 import {
   startDaemon,
   stopDaemon,
@@ -50,8 +50,8 @@ function findAllSockets(): string[] {
   try {
     const files = fs.readdirSync(tmpDir);
     return files
-      .filter((f) => socketPattern.test(f))
-      .map((f) => path.join(tmpDir, f));
+      .filter((f: string) => socketPattern.test(f))
+      .map((f: string) => path.join(tmpDir, f));
   } catch {
     return [];
   }
