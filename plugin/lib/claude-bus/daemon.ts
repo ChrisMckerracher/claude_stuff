@@ -661,14 +661,140 @@ const toolHandlers: Record<string, ToolHandler> = {
 // ─── Connection Management ──────────────────────────────────────────────────
 
 /**
- * Track connected clients for graceful shutdown
+ * Track connected clients for graceful shutdown and connection lifecycle
  */
 interface ClientConnection {
   socket: net.Socket;
   buffer: string;
+  /** Worker names owned by this connection */
+  ownedWorkers: Set<string>;
+}
+
+/**
+ * Extended worker with connection tracking
+ */
+interface ExtendedWorker extends Worker {
+  /** The connection that owns this worker */
+  ownerConnection?: ClientConnection;
+  /** Timestamp when worker disconnected (for grace period) */
+  disconnectedAt?: number;
+}
+
+// ─── Configuration Constants ─────────────────────────────────────────────────
+
+/**
+ * Default timeout for stuck tasks (30 minutes)
+ */
+const DEFAULT_TASK_TIMEOUT_MS = 30 * 60 * 1000;
+
+/**
+ * Grace period for worker reconnection after disconnect (30 seconds)
+ */
+const WORKER_DISCONNECT_GRACE_MS = 30 * 1000;
+
+/**
+ * Interval for checking stuck tasks (60 seconds)
+ */
+const TASK_CHECK_INTERVAL_MS = 60 * 1000;
+
+/**
+ * Grace period for graceful shutdown (5 seconds)
+ */
+const SHUTDOWN_GRACE_PERIOD_MS = 5000;
+
+/**
+ * Get task timeout from environment variable or default
+ */
+function getTaskTimeoutMs(): number {
+  const envTimeout = process.env.CLAUDE_BUS_TASK_TIMEOUT_MS;
+  if (envTimeout) {
+    const parsed = parseInt(envTimeout, 10);
+    if (!isNaN(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return DEFAULT_TASK_TIMEOUT_MS;
+}
+
+// ─── Logging ─────────────────────────────────────────────────────────────────
+
+/**
+ * Logger interface for daemon
+ */
+interface Logger {
+  info: (message: string) => void;
+  error: (message: string) => void;
+  warn: (message: string) => void;
+  debug: (message: string) => void;
+}
+
+/**
+ * Create a logger for foreground mode (stdout/stderr)
+ */
+function createForegroundLogger(): Logger {
+  return {
+    info: (msg: string) => console.error(`[daemon] ${msg}`),
+    error: (msg: string) => console.error(`[daemon] ERROR: ${msg}`),
+    warn: (msg: string) => console.error(`[daemon] WARN: ${msg}`),
+    debug: (msg: string) => {
+      if (process.env.CLAUDE_BUS_DEBUG) {
+        console.error(`[daemon] DEBUG: ${msg}`);
+      }
+    },
+  };
+}
+
+/**
+ * Create a logger for background mode (file-based)
+ */
+function createFileLogger(logPath: string): Logger {
+  const logDir = logPath.substring(0, logPath.lastIndexOf('/'));
+
+  // Ensure log directory exists
+  if (!fs.existsSync(logDir)) {
+    fs.mkdirSync(logDir, { recursive: true });
+  }
+
+  const writeLog = (level: string, msg: string) => {
+    const timestamp = new Date().toISOString();
+    const line = `${timestamp} [${level}] ${msg}\n`;
+    fs.appendFileSync(logPath, line);
+  };
+
+  return {
+    info: (msg: string) => writeLog('INFO', msg),
+    error: (msg: string) => writeLog('ERROR', msg),
+    warn: (msg: string) => writeLog('WARN', msg),
+    debug: (msg: string) => {
+      if (process.env.CLAUDE_BUS_DEBUG) {
+        writeLog('DEBUG', msg);
+      }
+    },
+  };
+}
+
+/**
+ * Get log file path for background mode
+ */
+export function getLogFilePath(socketPath: string): string {
+  const homeDir = process.env.HOME || '/tmp';
+  const hash = socketPath.split('-').pop()?.replace('.sock', '') || 'unknown';
+  return `${homeDir}/.claude-bus/logs/daemon-${hash}.log`;
 }
 
 // ─── Daemon Core ────────────────────────────────────────────────────────────
+
+/**
+ * Daemon startup options
+ */
+export interface DaemonOptions {
+  /** Project root for socket path calculation */
+  projectRoot?: string;
+  /** Run in foreground mode (log to stdout/stderr) */
+  foreground?: boolean;
+  /** Custom log file path (overrides default) */
+  logFile?: string;
+}
 
 /**
  * Daemon instance returned by startDaemon()
@@ -680,6 +806,8 @@ export interface DaemonInstance {
   socketPath: string;
   /** Shared state */
   state: State;
+  /** Logger instance */
+  logger: Logger;
   /** Graceful shutdown function */
   shutdown: () => Promise<void>;
 }
@@ -792,17 +920,122 @@ async function handleClientData(
 }
 
 /**
+ * Handle connection close - mark owned workers as disconnected.
+ *
+ * @param client - The disconnected client
+ * @param state - Daemon state
+ * @param logger - Logger instance
+ */
+function handleConnectionClose(
+  client: ClientConnection,
+  state: State,
+  logger: Logger
+): void {
+  const now = Date.now();
+
+  for (const workerName of client.ownedWorkers) {
+    const worker = state.workers.get(workerName) as ExtendedWorker | undefined;
+    if (worker) {
+      worker.disconnectedAt = now;
+      worker.ownerConnection = undefined;
+      logger.info(`Worker ${workerName} disconnected, grace period started`);
+    }
+  }
+}
+
+/**
+ * Check for disconnected workers past grace period and stuck tasks.
+ *
+ * @param state - Daemon state
+ * @param logger - Logger instance
+ */
+function checkWorkersAndTasks(state: State, logger: Logger): void {
+  const now = Date.now();
+  const taskTimeoutMs = getTaskTimeoutMs();
+
+  // Check for disconnected workers past grace period
+  for (const [name, worker] of state.workers) {
+    const extWorker = worker as ExtendedWorker;
+
+    // Check grace period for disconnected workers
+    if (extWorker.disconnectedAt) {
+      const elapsed = now - extWorker.disconnectedAt;
+      if (elapsed >= WORKER_DISCONNECT_GRACE_MS) {
+        logger.warn(`Worker ${name} grace period expired, removing`);
+
+        // Return any active task to queue
+        if (extWorker.current_task) {
+          const taskId = extWorker.current_task;
+          state.activeBeads.delete(taskId);
+          state.taskQueue.push(taskId);
+          logger.info(`Task ${taskId} returned to queue from disconnected worker ${name}`);
+        }
+
+        // Clean up worker
+        state.workers.delete(name);
+        state.pendingTasks.delete(name);
+
+        // Cancel any blocked poller
+        const poller = state.blockedPollers.get(name);
+        if (poller) {
+          clearTimeout(poller.timeout_id);
+          state.blockedPollers.delete(name);
+        }
+
+        continue; // Worker removed, skip timeout check
+      }
+    }
+
+    // Check for stuck tasks (tasks executing for too long)
+    if (extWorker.status === 'executing' && extWorker.task_started_at) {
+      const elapsed = now - extWorker.task_started_at;
+      if (elapsed >= taskTimeoutMs) {
+        const taskId = extWorker.current_task!;
+        logger.warn(`Task ${taskId} timed out on worker ${name} after ${elapsed}ms`);
+
+        // Return task to queue
+        state.activeBeads.delete(taskId);
+        state.taskQueue.push(taskId);
+
+        // Reset worker to idle
+        extWorker.status = 'idle';
+        extWorker.last_activity = now;
+        extWorker.current_task = null;
+        extWorker.task_started_at = null;
+
+        logger.info(`Task ${taskId} returned to queue due to timeout`);
+      }
+    }
+  }
+
+  // Process queue after cleanup
+  processQueue(state);
+}
+
+/**
  * Start the daemon process.
  *
  * Creates a Unix socket server that listens for IPC requests from MCP clients.
  *
- * @param projectRoot - Optional project root for socket path
+ * @param options - Daemon options or project root string for backward compatibility
  * @returns Daemon instance with server, state, and shutdown function
  */
-export async function startDaemon(projectRoot?: string): Promise<DaemonInstance> {
-  const socketPath = getSocketPath(projectRoot);
+export async function startDaemon(options?: DaemonOptions | string): Promise<DaemonInstance> {
+  // Handle backward compatibility with string argument
+  const opts: DaemonOptions = typeof options === 'string'
+    ? { projectRoot: options }
+    : options || {};
+
+  const socketPath = getSocketPath(opts.projectRoot);
   const state = createState();
   const clients: Set<ClientConnection> = new Set();
+
+  // Setup logger
+  const isForeground = opts.foreground !== false; // Default to foreground for backward compatibility
+  const logPath = opts.logFile || getLogFilePath(socketPath);
+  const logger: Logger = isForeground
+    ? createForegroundLogger()
+    : createFileLogger(logPath);
 
   // Clean up stale socket if it exists
   if (isSocketStale(socketPath)) {
@@ -811,29 +1044,66 @@ export async function startDaemon(projectRoot?: string): Promise<DaemonInstance>
     throw new Error(`Daemon already running (socket: ${socketPath})`);
   }
 
+  // Start periodic check for stuck tasks and disconnected workers
+  const taskCheckInterval = setInterval(() => {
+    try {
+      checkWorkersAndTasks(state, logger);
+    } catch (e) {
+      logger.error(`Task check failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }, TASK_CHECK_INTERVAL_MS);
+
+  // Unref the interval so it doesn't prevent process exit during tests
+  taskCheckInterval.unref();
+
   // Create the server
   const server = net.createServer((socket) => {
     const client: ClientConnection = {
       socket,
       buffer: '',
+      ownedWorkers: new Set(),
     };
     clients.add(client);
 
+    logger.debug(`Client connected`);
+
     socket.on('data', async (data) => {
       try {
+        // Track worker registration for connection lifecycle
+        const originalRegister = toolHandlers.register_worker;
+        toolHandlers.register_worker = (params: Record<string, unknown>, s: State) => {
+          const result = originalRegister(params, s);
+          // Track which workers this connection owns
+          const resultData = result as { success: boolean; worker?: string };
+          if (resultData.success && resultData.worker) {
+            client.ownedWorkers.add(resultData.worker);
+            const worker = s.workers.get(resultData.worker) as ExtendedWorker;
+            if (worker) {
+              worker.ownerConnection = client;
+              worker.disconnectedAt = undefined;
+            }
+          }
+          return result;
+        };
+
         await handleClientData(client, data, state);
+
+        // Restore original handler
+        toolHandlers.register_worker = originalRegister;
       } catch (e) {
-        console.error('[daemon] Error handling client data:', e);
+        logger.error(`Error handling client data: ${e instanceof Error ? e.message : String(e)}`);
       }
     });
 
     socket.on('error', (err) => {
-      // Client disconnected or error - clean up
-      console.error('[daemon] Client error:', err.message);
+      logger.error(`Client error: ${err.message}`);
+      handleConnectionClose(client, state, logger);
       clients.delete(client);
     });
 
     socket.on('close', () => {
+      logger.debug(`Client disconnected`);
+      handleConnectionClose(client, state, logger);
       clients.delete(client);
     });
   });
@@ -858,21 +1128,21 @@ export async function startDaemon(projectRoot?: string): Promise<DaemonInstance>
   // Write PID file
   writePidFile(socketPath);
 
-  console.error(`[daemon] Listening on ${socketPath} (PID: ${process.pid})`);
+  logger.info(`Listening on ${socketPath} (PID: ${process.pid})`);
 
   // Track signal handlers so we can remove them on shutdown
   let shuttingDown = false;
   const sigTermHandler = () => {
     if (!shuttingDown) {
       shuttingDown = true;
-      console.error('[daemon] Received SIGTERM');
+      logger.info('Received SIGTERM');
       shutdown().then(() => process.exit(0));
     }
   };
   const sigIntHandler = () => {
     if (!shuttingDown) {
       shuttingDown = true;
-      console.error('[daemon] Received SIGINT');
+      logger.info('Received SIGINT');
       shutdown().then(() => process.exit(0));
     }
   };
@@ -887,12 +1157,15 @@ export async function startDaemon(projectRoot?: string): Promise<DaemonInstance>
 
   // Graceful shutdown function
   const shutdown = async (): Promise<void> => {
-    console.error('[daemon] Shutting down...');
+    logger.info('Shutting down...');
 
     // Remove signal handlers to prevent memory leaks in tests
     process.removeListener('SIGTERM', sigTermHandler);
     process.removeListener('SIGINT', sigIntHandler);
     process.removeListener('exit', exitHandler);
+
+    // Stop periodic task check
+    clearInterval(taskCheckInterval);
 
     // 1. Stop accepting new connections
     server.close();
@@ -907,10 +1180,36 @@ export async function startDaemon(projectRoot?: string): Promise<DaemonInstance>
       }
     }
 
-    // 3. Wait a short time for clients to process notification
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    // 3. Cancel all blocked pollers with shutdown response
+    for (const [name, poller] of state.blockedPollers) {
+      clearTimeout(poller.timeout_id);
+      // Resolve with null to signal shutdown
+      poller.resolve(null);
+    }
+    state.blockedPollers.clear();
 
-    // 4. Force close remaining connections
+    // 4. Wait for active requests to complete (up to grace period)
+    const activeRequestsCount = () => {
+      let count = 0;
+      for (const worker of state.workers.values()) {
+        if (worker.status === 'executing') {
+          count++;
+        }
+      }
+      return count;
+    };
+
+    const shutdownStart = Date.now();
+    while (activeRequestsCount() > 0) {
+      const elapsed = Date.now() - shutdownStart;
+      if (elapsed >= SHUTDOWN_GRACE_PERIOD_MS) {
+        logger.warn(`Shutdown grace period exceeded, ${activeRequestsCount()} active requests abandoned`);
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    // 5. Force close remaining connections
     for (const client of clients) {
       try {
         client.socket.destroy();
@@ -920,22 +1219,17 @@ export async function startDaemon(projectRoot?: string): Promise<DaemonInstance>
     }
     clients.clear();
 
-    // 5. Cancel all blocked pollers
-    for (const [name, poller] of state.blockedPollers) {
-      clearTimeout(poller.timeout_id);
-      state.blockedPollers.delete(name);
-    }
-
     // 6. Clean up socket and PID files
     cleanupSocketFiles(socketPath);
 
-    console.error('[daemon] Shutdown complete');
+    logger.info('Shutdown complete');
   };
 
   return {
     server,
     socketPath,
     state,
+    logger,
     shutdown,
   };
 }

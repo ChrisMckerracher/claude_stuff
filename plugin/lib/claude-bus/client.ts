@@ -9,9 +9,47 @@
 
 import * as net from 'net';
 import * as fs from 'fs';
-import { spawn, type ChildProcess } from 'child_process';
+import * as path from 'path';
+import { spawn, ChildProcess } from 'child_process';
 import { getSocketPath, isSocketStale } from './daemon.js';
 import type { DaemonRequest, DaemonResponse } from './daemon.js';
+
+/**
+ * Get the directory containing this module.
+ * Uses a workaround to avoid direct import.meta access which doesn't work in Jest.
+ */
+function getModuleDir(): string {
+  try {
+    // Try to get from Error stack trace (works in both ESM and CJS)
+    const err = new Error();
+    const stack = err.stack || '';
+    // Look for file:// URLs in the stack
+    const match = stack.match(/file:\/\/([^\s:]+)/);
+    if (match) {
+      return path.dirname(match[1]);
+    }
+    // Try to extract path from stack (node format)
+    const pathMatch = stack.match(/at\s+(?:.*?)\s+\(([^:]+):\d+:\d+\)/);
+    if (pathMatch && pathMatch[1].includes('/')) {
+      return path.dirname(pathMatch[1]);
+    }
+  } catch {
+    // Ignore errors from stack parsing
+  }
+  // Fallback: look for daemon.js relative to process.cwd() in common locations
+  const candidates = [
+    path.join(process.cwd(), 'dist', 'claude-bus'),
+    path.join(process.cwd(), 'plugin', 'lib', 'dist', 'claude-bus'),
+    path.join(process.cwd(), 'claude-bus'),
+  ];
+  for (const dir of candidates) {
+    if (fs.existsSync(path.join(dir, 'daemon.js'))) {
+      return dir;
+    }
+  }
+  // Last resort: assume we're in the same directory
+  return process.cwd();
+}
 
 /**
  * Default timeouts and retry configuration
@@ -90,7 +128,7 @@ async function tryConnect(
 function spawnDaemon(projectRoot?: string): ChildProcess {
   // Get the path to the daemon entry point
   // The daemon.js is in the same directory as client.js when compiled
-  const daemonPath = new URL('./daemon.js', import.meta.url).pathname;
+  const daemonPath = path.join(getModuleDir(), 'daemon.js');
 
   const args = [daemonPath];
   if (projectRoot) {

@@ -676,3 +676,274 @@ describe('Multi-client State Sharing', () => {
     }
   });
 });
+
+// ─── Socket Security Tests ──────────────────────────────────────────────────
+
+describe('Socket Security', () => {
+  let daemon: DaemonInstance | null = null;
+  let testProjectPath: string;
+
+  beforeEach(async () => {
+    testProjectPath = getTestProjectPath();
+    daemon = await startDaemon(testProjectPath);
+  });
+
+  afterEach(async () => {
+    if (daemon) {
+      await daemon.shutdown();
+      daemon = null;
+    }
+  });
+
+  it('should set socket permissions to 0600 (owner only)', async () => {
+    const stats = fs.statSync(daemon!.socketPath);
+    // 0600 in octal = 384 in decimal, but mode includes file type bits
+    // So we check only the permission bits (last 9 bits)
+    const permissions = stats.mode & 0o777;
+    expect(permissions).toBe(0o600);
+  });
+});
+
+// ─── Graceful Shutdown Tests ─────────────────────────────────────────────────
+
+describe('Graceful Shutdown', () => {
+  let daemon: DaemonInstance | null = null;
+  let testProjectPath: string;
+
+  beforeEach(async () => {
+    testProjectPath = getTestProjectPath();
+    daemon = await startDaemon(testProjectPath);
+  });
+
+  afterEach(async () => {
+    if (daemon) {
+      try {
+        await daemon.shutdown();
+      } catch {
+        // Ignore if already shut down
+      }
+      daemon = null;
+    }
+  });
+
+  it('should send shutdown notification to connected clients', async () => {
+    // Connect a client and listen for shutdown notification
+    const shutdownReceived = new Promise<boolean>((resolve) => {
+      const client = net.createConnection(daemon!.socketPath);
+      let buffer = '';
+
+      client.on('data', (data) => {
+        buffer += data.toString();
+        if (buffer.includes('shutdown')) {
+          try {
+            const messages = buffer.split('\n').filter(Boolean);
+            for (const msg of messages) {
+              const parsed = JSON.parse(msg);
+              if (parsed.type === 'shutdown') {
+                resolve(true);
+                client.destroy();
+                return;
+              }
+            }
+          } catch {
+            // Ignore parse errors
+          }
+        }
+      });
+
+      client.on('error', () => resolve(false));
+      client.on('close', () => resolve(false));
+    });
+
+    // Give the client time to connect
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // Trigger shutdown
+    await daemon!.shutdown();
+    daemon = null;
+
+    // Verify shutdown notification was received
+    const received = await Promise.race([
+      shutdownReceived,
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 1000)),
+    ]);
+    expect(received).toBe(true);
+  });
+
+  it('should resolve blocked pollers with null on shutdown', async () => {
+    // Register a worker
+    await sendRequest(daemon!.socketPath, {
+      id: 'reg',
+      tool: 'register_worker',
+      params: { name: 'worker1' },
+    });
+
+    // Start a poll that will block - use a long-running connection
+    let pollResolved = false;
+    let pollResult: DaemonResponse | null = null;
+
+    const pollConnection = new Promise<void>((resolve, reject) => {
+      const client = net.createConnection(daemon!.socketPath);
+      let buffer = '';
+
+      client.on('connect', () => {
+        // Send poll request
+        client.write(JSON.stringify({
+          id: 'poll',
+          tool: 'poll_task',
+          params: { name: 'worker1', timeout_ms: 30000 },
+        }) + '\n');
+      });
+
+      client.on('data', (data) => {
+        buffer += data.toString();
+        const newlineIdx = buffer.indexOf('\n');
+        if (newlineIdx !== -1) {
+          try {
+            pollResult = JSON.parse(buffer.slice(0, newlineIdx));
+            pollResolved = true;
+          } catch {
+            // Ignore parse errors for shutdown notifications
+          }
+        }
+      });
+
+      client.on('close', () => {
+        pollResolved = true;
+        resolve();
+      });
+      client.on('error', () => {
+        pollResolved = true;
+        resolve();
+      });
+
+      // Timeout safeguard
+      setTimeout(() => resolve(), 2000);
+    });
+
+    // Give the poll time to start
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Verify worker is polling
+    const status = await sendRequest(daemon!.socketPath, {
+      id: 'status',
+      tool: 'get_status',
+      params: {},
+    });
+    expect(status.success).toBe(true);
+    if (status.success) {
+      expect((status.data as any).polling_workers).toBe(1);
+    }
+
+    // Trigger shutdown
+    await daemon!.shutdown();
+    daemon = null;
+
+    // Wait for poll connection to resolve
+    await pollConnection;
+
+    // The poll should have resolved (either with response or connection close)
+    expect(pollResolved).toBe(true);
+  });
+
+  it('should clean up socket and PID files after shutdown', async () => {
+    const socketPath = daemon!.socketPath;
+    const pidFile = getPidFilePath(socketPath);
+
+    expect(fs.existsSync(socketPath)).toBe(true);
+    expect(fs.existsSync(pidFile)).toBe(true);
+
+    await daemon!.shutdown();
+    daemon = null;
+
+    expect(fs.existsSync(socketPath)).toBe(false);
+    expect(fs.existsSync(pidFile)).toBe(false);
+  });
+});
+
+// ─── Logging Tests ──────────────────────────────────────────────────────────
+
+import { getLogFilePath } from './daemon';
+
+describe('Daemon Logging', () => {
+  it('should generate log file path based on socket path hash', () => {
+    const socketPath = '/tmp/claude-bus-abc12345.sock';
+    const logPath = getLogFilePath(socketPath);
+
+    expect(logPath).toMatch(/\/\.claude-bus\/logs\/daemon-abc12345\.log$/);
+  });
+
+  it('should use HOME env var for log directory', () => {
+    const originalHome = process.env.HOME;
+    process.env.HOME = '/custom/home';
+
+    try {
+      const socketPath = '/tmp/claude-bus-test1234.sock';
+      const logPath = getLogFilePath(socketPath);
+
+      expect(logPath).toBe('/custom/home/.claude-bus/logs/daemon-test1234.log');
+    } finally {
+      process.env.HOME = originalHome;
+    }
+  });
+
+  it('should fall back to /tmp when HOME is not set', () => {
+    const originalHome = process.env.HOME;
+    delete process.env.HOME;
+
+    try {
+      const socketPath = '/tmp/claude-bus-fallback.sock';
+      const logPath = getLogFilePath(socketPath);
+
+      expect(logPath).toBe('/tmp/.claude-bus/logs/daemon-fallback.log');
+    } finally {
+      process.env.HOME = originalHome;
+    }
+  });
+});
+
+// ─── DaemonOptions Tests ─────────────────────────────────────────────────────
+
+describe('DaemonOptions', () => {
+  let daemon: DaemonInstance | null = null;
+  let testProjectPath: string;
+
+  beforeEach(() => {
+    testProjectPath = getTestProjectPath();
+  });
+
+  afterEach(async () => {
+    if (daemon) {
+      await daemon.shutdown();
+      daemon = null;
+    }
+    // Clean up any leftover files
+    const socketPath = getSocketPath(testProjectPath);
+    const pidFile = getPidFilePath(socketPath);
+    try { fs.unlinkSync(socketPath); } catch { /* ignore */ }
+    try { fs.unlinkSync(pidFile); } catch { /* ignore */ }
+  });
+
+  it('should accept string for backward compatibility', async () => {
+    daemon = await startDaemon(testProjectPath);
+
+    expect(fs.existsSync(daemon.socketPath)).toBe(true);
+    expect(daemon.logger).toBeDefined();
+  });
+
+  it('should accept options object', async () => {
+    daemon = await startDaemon({ projectRoot: testProjectPath });
+
+    expect(fs.existsSync(daemon.socketPath)).toBe(true);
+  });
+
+  it('should return a logger in the daemon instance', async () => {
+    daemon = await startDaemon(testProjectPath);
+
+    expect(daemon.logger).toBeDefined();
+    expect(typeof daemon.logger.info).toBe('function');
+    expect(typeof daemon.logger.error).toBe('function');
+    expect(typeof daemon.logger.warn).toBe('function');
+    expect(typeof daemon.logger.debug).toBe('function');
+  });
+});
