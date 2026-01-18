@@ -77,23 +77,66 @@ function cleanupSocket(socketPath: string): void {
 }
 
 /**
+ * Check if a socket is stale (file exists but no server responding).
+ *
+ * @param socketPath - Path to the socket file
+ * @param timeout - Connection timeout in ms (default: 500)
+ * @returns Promise<true> if stale (safe to clean up), false if active server
+ */
+async function isSocketStale(socketPath: string, timeout: number = 500): Promise<boolean> {
+  if (!fs.existsSync(socketPath)) {
+    return true; // No socket file = stale
+  }
+
+  return new Promise((resolve) => {
+    const socket = net.createConnection(socketPath);
+    const timeoutId = setTimeout(() => {
+      socket.destroy();
+      resolve(true); // Timeout = stale
+    }, timeout);
+
+    socket.on('connect', () => {
+      clearTimeout(timeoutId);
+      socket.destroy();
+      resolve(false); // Connected = active server
+    });
+
+    socket.on('error', () => {
+      clearTimeout(timeoutId);
+      socket.destroy();
+      resolve(true); // Error = stale
+    });
+  });
+}
+
+/**
  * Start an IPC server that listens for notifications.
  *
  * Creates a Unix domain socket server that accepts JSON-RPC style
  * messages from CLI commands.
  *
+ * Uses atomic socket creation to prevent race conditions when multiple
+ * Claude Code instances start simultaneously. If another server is already
+ * running, this will throw an error with code 'EADDRINUSE'.
+ *
  * @param handler - Function to handle incoming messages
  * @param projectRoot - Optional project root for socket path
- * @returns The server instance and socket path
+ * @returns Promise with the server instance and socket path
+ * @throws Error with code 'EADDRINUSE' if socket already exists and is in use
  */
-export function startIpcServer(
+export async function startIpcServer(
   handler: IpcHandler,
   projectRoot?: string
-): { server: net.Server; socketPath: string } {
+): Promise<{ server: net.Server; socketPath: string }> {
   const socketPath = getSocketPath(projectRoot);
 
-  // Clean up any stale socket
-  cleanupSocket(socketPath);
+  // Only clean up socket if it's truly stale (file exists but no server responding)
+  // This prevents race conditions where we delete another server's active socket
+  const stale = await isSocketStale(socketPath);
+  if (stale) {
+    cleanupSocket(socketPath);
+  }
+  // If not stale, server.listen() will fail with EADDRINUSE - that's intentional
 
   const server = net.createServer((connection) => {
     let buffer = '';
@@ -142,7 +185,16 @@ export function startIpcServer(
     });
   });
 
-  server.listen(socketPath);
+  // Wrap listen in a Promise to catch EADDRINUSE
+  await new Promise<void>((resolve, reject) => {
+    server.on('error', (err: NodeJS.ErrnoException) => {
+      reject(err);
+    });
+
+    server.listen(socketPath, () => {
+      resolve();
+    });
+  });
 
   // Ensure socket is cleaned up on process exit
   const cleanup = () => {

@@ -17,7 +17,7 @@
  * @module claude-bus/cli
  */
 
-import { startServer, startClientMode } from './server.js';
+import { startServer, startClientMode, EADDRINUSE } from './server.js';
 import { notifyWorkerDone, notifyTaskFailed, isBusRunning, tryConnectToServer } from './ipc.js';
 
 const command = process.argv[2];
@@ -35,9 +35,22 @@ async function main(): Promise<void> {
         console.error('[claude-bus] Server already running, starting as client');
         await startClientMode();
       } else {
-        // No server running - become the server
-        console.error('[claude-bus] Starting as server');
-        await startServer();
+        // No server running - try to become the server
+        // Race condition handling: if another process wins the race and creates
+        // the socket first, we'll get EADDRINUSE and fall back to client mode
+        try {
+          console.error('[claude-bus] Starting as server');
+          await startServer();
+        } catch (err) {
+          const error = err as NodeJS.ErrnoException;
+          if (error.code === EADDRINUSE) {
+            // Another process won the race - fall back to client mode
+            console.error('[claude-bus] Server race lost, starting as client');
+            await startClientMode();
+          } else {
+            throw err;
+          }
+        }
       }
       break;
     }

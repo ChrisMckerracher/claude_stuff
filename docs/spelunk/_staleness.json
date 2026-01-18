@@ -1,6 +1,14 @@
 {
   "version": 1,
   "docs": {
+    "flows/register-worker-call-flow.md": {
+      "generated": "2026-01-17T00:00:00Z",
+      "source_files": {
+        "plugin/lib/claude-bus/server.ts": "2e9bd156",
+        "plugin/lib/claude-bus/ipc.ts": "64e0fada",
+        "plugin/lib/claude-bus/types.ts": "3213f26f"
+      }
+    },
     "contracts/mcp-tool-name-validation.md": {
       "generated": "2026-01-17T00:00:00Z",
       "source_files": {

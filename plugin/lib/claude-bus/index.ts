@@ -38,7 +38,7 @@ export { selectWorker } from './selection.js';
 // See: docs/plans/architect/claude-bus-polling.md
 
 // Re-export server
-export { createClaudeBusServer, startServer } from './server.js';
+export { createClaudeBusServer, startServer, TOOL_SCHEMAS } from './server.js';
 
 // Re-export IPC functions
 export {

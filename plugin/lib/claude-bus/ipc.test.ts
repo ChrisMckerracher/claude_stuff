@@ -61,7 +61,7 @@ describe('IPC Module', () => {
         return { success: false, error: 'Unknown type' };
       });
 
-      const { server, socketPath } = startIpcServer(handler, testProjectRoot);
+      const { server, socketPath } = await startIpcServer(handler, testProjectRoot);
       cleanup = () => {
         server.close();
         try {
@@ -88,7 +88,7 @@ describe('IPC Module', () => {
         return { success: false, error: 'Unknown type' };
       });
 
-      const { server, socketPath } = startIpcServer(handler, testProjectRoot);
+      const { server, socketPath } = await startIpcServer(handler, testProjectRoot);
       cleanup = () => {
         server.close();
         try {
@@ -118,7 +118,7 @@ describe('IPC Module', () => {
         return { success: true };
       });
 
-      const { server, socketPath } = startIpcServer(handler, testProjectRoot);
+      const { server, socketPath } = await startIpcServer(handler, testProjectRoot);
       cleanup = () => {
         server.close();
         try {
@@ -152,7 +152,7 @@ describe('IPC Module', () => {
         return { success: false, error: 'Unknown type' };
       };
 
-      const { server, socketPath } = startIpcServer(handler, testProjectRoot);
+      const { server, socketPath } = await startIpcServer(handler, testProjectRoot);
 
       try {
         const running = await isBusRunning(testProjectRoot);
@@ -194,7 +194,7 @@ describe('Singleton Server Pattern', () => {
         return { success: false, error: 'Unknown type' };
       };
 
-      const { server, socketPath } = startIpcServer(handler, testProjectRoot);
+      const { server, socketPath } = await startIpcServer(handler, testProjectRoot);
 
       try {
         const socket = await tryConnectToServer(testProjectRoot);
@@ -270,7 +270,7 @@ describe('Singleton Server Pattern', () => {
         return { success: false, error: 'Unknown type' };
       };
 
-      const { server, socketPath } = startIpcServer(handler, testProjectRoot);
+      const { server, socketPath } = await startIpcServer(handler, testProjectRoot);
 
       try {
         // Forward a get_status call
@@ -312,7 +312,7 @@ describe('Singleton Server Pattern', () => {
         return { success: false, error: 'Unknown type' };
       };
 
-      const { server, socketPath } = startIpcServer(handler, testProjectRoot);
+      const { server, socketPath } = await startIpcServer(handler, testProjectRoot);
 
       try {
         await expect(
@@ -363,7 +363,7 @@ describe('Singleton Server Pattern', () => {
         return { success: false, error: 'Unknown' };
       };
 
-      const { server, socketPath } = startIpcServer(handler, testProjectRoot);
+      const { server, socketPath } = await startIpcServer(handler, testProjectRoot);
 
       try {
         // "Client A" registers a worker

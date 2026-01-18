@@ -85,6 +85,59 @@ function generateUniqueName(baseName: string, workers: Map<string, Worker>): str
 }
 
 /**
+ * Shared tool schema definitions for MCP tools.
+ * Used by both server mode (createClaudeBusServer) and client mode (startClientMode)
+ * to ensure consistent parameter schemas are exposed to Claude.
+ */
+export const TOOL_SCHEMAS = {
+  submit_task: {
+    description: 'Submit a bead task to be dispatched to an available worker',
+    schema: { bead_id: z.string().describe('The bead ID to submit for execution') },
+  },
+  worker_done: {
+    description: 'Signal that a worker has completed its task',
+    schema: { bead_id: z.string().describe('The bead ID that was completed') },
+  },
+  get_status: {
+    description: 'Get the current status of all workers and the task queue',
+    schema: {},
+  },
+  reset_worker: {
+    description: 'Force a stuck worker back to idle state',
+    schema: { worker_name: z.string().describe('The worker name to reset') },
+  },
+  retry_task: {
+    description: 'Re-queue an in_progress task for another worker',
+    schema: { bead_id: z.string().describe('The bead ID to retry') },
+  },
+  task_failed: {
+    description: 'Mark a task as blocked and free the worker',
+    schema: {
+      bead_id: z.string().describe('The bead ID that failed'),
+      reason: z.string().describe('Reason for failure'),
+    },
+  },
+  register_worker: {
+    description: 'Register a worker with the bus (for polling-based dispatch)',
+    schema: { name: z.string().min(1, 'Worker name is required').describe('The worker name (e.g., z.ai1)') },
+  },
+  poll_task: {
+    description: 'Long-poll for a task assignment (blocks until task or timeout)',
+    schema: {
+      name: z.string().min(1, 'Worker name is required').describe('The worker name'),
+      timeout_ms: z.number().optional().describe('Timeout in milliseconds (default: 30000)'),
+    },
+  },
+  ack_task: {
+    description: 'Acknowledge receipt of a task before execution',
+    schema: {
+      name: z.string().min(1, 'Worker name is required').describe('The worker name'),
+      bead_id: z.string().describe('The bead ID being acknowledged'),
+    },
+  },
+} as const;
+
+/**
  * Internal helper to assign a task to a polling worker.
  *
  * Marks the task as pending and the worker will receive it when they call poll_task().
@@ -1031,12 +1084,20 @@ function createIpcHandler(
 }
 
 /**
+ * Error code for socket already in use (another server running).
+ */
+export const EADDRINUSE = 'EADDRINUSE';
+
+/**
  * Start the MCP server using stdio transport.
  *
  * This is the main entry point when running the server as a standalone process.
  * Claude Code will spawn this process and communicate via stdin/stdout.
  *
  * Also starts an IPC server on a Unix socket for CLI notifications.
+ *
+ * @throws Error with code 'EADDRINUSE' if another server is already running
+ *         (caller should fall back to client mode)
  */
 export async function startServer(): Promise<void> {
   const { server, state, callTool } = createClaudeBusServer();
@@ -1047,8 +1108,9 @@ export async function startServer(): Promise<void> {
   };
 
   // Start IPC server for CLI notifications and tool forwarding
+  // This may throw EADDRINUSE if another server is already running
   const ipcHandler = createIpcHandler(state, processQueueFn, callTool);
-  const { socketPath } = startIpcServer(ipcHandler);
+  const { socketPath } = await startIpcServer(ipcHandler);
   console.error(`[claude-bus] IPC server listening on ${socketPath}`);
 
   // Start MCP server
@@ -1068,24 +1130,16 @@ export async function startClientMode(): Promise<void> {
     version: '0.1.0',
   });
 
-  // Define the same tools, but forward them via IPC
-  const tools = [
-    'submit_task',
-    'worker_done',
-    'get_status',
-    'reset_worker',
-    'retry_task',
-    'task_failed',
-    'register_worker',
-    'poll_task',
-    'ack_task',
-  ];
+  // Define tools with same schemas as server mode, forwarding via IPC
+  const toolNames = Object.keys(TOOL_SCHEMAS) as Array<keyof typeof TOOL_SCHEMAS>;
 
-  for (const toolName of tools) {
-    // Each tool forwards to the real server
+  for (const toolName of toolNames) {
+    const toolDef = TOOL_SCHEMAS[toolName];
+    // Register tool with schema so Claude knows the parameters
     (server.tool as Function)(
       toolName,
-      `Forward ${toolName} to bus server`,
+      toolDef.description,
+      toolDef.schema,
       async (args: Record<string, unknown>) => {
         try {
           const result = await forwardToolCall(toolName, args);

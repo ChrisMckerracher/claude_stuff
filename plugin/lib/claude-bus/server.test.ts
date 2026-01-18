@@ -5,7 +5,7 @@
  * Uses mocks for external dependencies (beads CLI) to enable unit testing.
  */
 
-import { createClaudeBusServer } from './server';
+import { createClaudeBusServer, TOOL_SCHEMAS } from './server';
 import { validateBead, beadSetInProgress, beadMarkBlocked } from './beads';
 import { selectWorker } from './selection';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -1108,6 +1108,72 @@ describe('callTool dispatcher', () => {
       })) as any;
 
       expect(result.error).toContain('Unknown worker');
+    });
+  });
+});
+
+// ============================================================================
+// TOOL_SCHEMAS Tests
+// Verify shared schemas are complete and well-formed
+// ============================================================================
+
+describe('TOOL_SCHEMAS', () => {
+  const expectedTools = [
+    'submit_task',
+    'worker_done',
+    'get_status',
+    'reset_worker',
+    'retry_task',
+    'task_failed',
+    'register_worker',
+    'poll_task',
+    'ack_task',
+  ];
+
+  it('should define all expected tools', () => {
+    const definedTools = Object.keys(TOOL_SCHEMAS);
+    expect(definedTools).toEqual(expect.arrayContaining(expectedTools));
+    expect(expectedTools).toEqual(expect.arrayContaining(definedTools));
+  });
+
+  it('should have description and schema for each tool', () => {
+    for (const toolName of expectedTools) {
+      const toolDef = TOOL_SCHEMAS[toolName as keyof typeof TOOL_SCHEMAS];
+      expect(toolDef).toBeDefined();
+      expect(toolDef.description).toBeDefined();
+      expect(typeof toolDef.description).toBe('string');
+      expect(toolDef.description.length).toBeGreaterThan(0);
+      expect(toolDef.schema).toBeDefined();
+    }
+  });
+
+  describe('register_worker schema', () => {
+    it('should require name parameter', () => {
+      const schema = TOOL_SCHEMAS.register_worker.schema;
+      expect(schema).toHaveProperty('name');
+    });
+  });
+
+  describe('poll_task schema', () => {
+    it('should require name and optional timeout_ms', () => {
+      const schema = TOOL_SCHEMAS.poll_task.schema;
+      expect(schema).toHaveProperty('name');
+      expect(schema).toHaveProperty('timeout_ms');
+    });
+  });
+
+  describe('ack_task schema', () => {
+    it('should require name and bead_id', () => {
+      const schema = TOOL_SCHEMAS.ack_task.schema;
+      expect(schema).toHaveProperty('name');
+      expect(schema).toHaveProperty('bead_id');
+    });
+  });
+
+  describe('get_status schema', () => {
+    it('should have empty schema (no required params)', () => {
+      const schema = TOOL_SCHEMAS.get_status.schema;
+      expect(Object.keys(schema)).toHaveLength(0);
     });
   });
 });
