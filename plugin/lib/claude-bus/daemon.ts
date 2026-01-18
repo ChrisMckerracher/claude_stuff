@@ -314,7 +314,7 @@ const toolHandlers: Record<string, ToolHandler> = {
   // ─── poll_task ──────────────────────────────────────────────────────────
   poll_task: (params: Record<string, unknown>, state: State) => {
     const name = params.name as string;
-    const timeout = (params.timeout_ms as number) ?? 30000;
+    const timeout = (params.timeout_ms as number) ?? 5000;
 
     // Validate worker name format
     const nameError = validateWorkerName(name);
@@ -1069,27 +1069,28 @@ export async function startDaemon(options?: DaemonOptions | string): Promise<Dae
 
     socket.on('data', async (data) => {
       try {
-        // Track worker registration for connection lifecycle
-        const originalRegister = toolHandlers.register_worker;
-        toolHandlers.register_worker = (params: Record<string, unknown>, s: State) => {
-          const result = originalRegister(params, s);
-          // Track which workers this connection owns
-          const resultData = result as { success: boolean; worker?: string };
-          if (resultData.success && resultData.worker) {
-            client.ownedWorkers.add(resultData.worker);
-            const worker = s.workers.get(resultData.worker) as ExtendedWorker;
-            if (worker) {
-              worker.ownerConnection = client;
-              worker.disconnectedAt = undefined;
-            }
+        // Track worker polling for connection lifecycle
+        // Only associate workers with connections during poll_task (persistent connections)
+        // NOT during register_worker (short-lived connections)
+        const originalPollTask = toolHandlers.poll_task;
+        toolHandlers.poll_task = (params: Record<string, unknown>, s: State) => {
+          const name = params.name as string;
+          const worker = s.workers.get(name) as ExtendedWorker | undefined;
+
+          // Associate this connection with the worker when they start polling
+          if (worker) {
+            client.ownedWorkers.add(name);
+            worker.ownerConnection = client;
+            worker.disconnectedAt = undefined;
           }
-          return result;
+
+          return originalPollTask(params, s);
         };
 
         await handleClientData(client, data, state);
 
         // Restore original handler
-        toolHandlers.register_worker = originalRegister;
+        toolHandlers.poll_task = originalPollTask;
       } catch (e) {
         logger.error(`Error handling client data: ${e instanceof Error ? e.message : String(e)}`);
       }

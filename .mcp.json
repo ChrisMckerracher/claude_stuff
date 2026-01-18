@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "claude-bus": {
-      "command": "node",
-      "args": ["/Users/chrismck/tasks/claude_stuff/plugin/lib/claude-bus/dist/cli.js", "serve"]
+      "command": "claude-bus",
+      "args": ["serve"]
     }
   }
 }

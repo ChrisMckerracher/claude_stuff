@@ -64,7 +64,7 @@ export const TOOL_SCHEMAS = {
     description: 'Long-poll for a task assignment (blocks until task or timeout)',
     schema: {
       name: z.string().min(1, 'Worker name is required').describe('The worker name'),
-      timeout_ms: z.number().optional().describe('Timeout in milliseconds (default: 30000)'),
+      timeout_ms: z.number().optional().describe('Timeout in milliseconds (default: 5000)'),
     },
   },
   ack_task: {

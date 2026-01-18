@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "description": "Shared libraries for the agent ecosystem",
   "type": "module",
+  "bin": {
+    "claude-bus": "./dist/claude-bus/cli.js"
+  },
   "scripts": {
     "test": "jest",
     "test:watch": "jest --watch",
