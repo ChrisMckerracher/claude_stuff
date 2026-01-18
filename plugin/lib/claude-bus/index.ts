@@ -64,16 +64,3 @@ export {
   type DaemonErrorResponse,
   type DaemonErrorCode,
 } from './daemon.js';
-
-// Re-export IPC functions (for backward compatibility)
-export {
-  getSocketPath as getIpcSocketPath,
-  sendIpcMessage,
-  notifyWorkerDone,
-  notifyTaskFailed,
-  isBusRunning,
-  IpcRequest,
-  IpcResponse,
-  IpcMessageType,
-  IpcHandler,
-} from './ipc.js';
