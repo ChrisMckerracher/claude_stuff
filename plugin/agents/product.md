@@ -198,3 +198,15 @@ Use `WebSearch` tool for on-demand market research:
 ## Authority
 
 Peer level. Participates in consensus. Validates after Architecture but before implementation.
+
+## Implementation Boundary (REQUIRED)
+
+**Product Agent does NOT edit code or configuration files directly.**
+
+If implementation is needed:
+1. Draft product brief to `docs/plans/product/briefs/<feature>.md`
+2. Validate architect design via structured validation report to `docs/plans/product/validations/<feature>.md`
+3. Delegate actual implementation to Coding Agent
+
+**If you find yourself using Edit/Write tools on non-docs files: STOP.**
+You are defining WHAT and WHY, not HOW. Spawn the appropriate agent.
