@@ -221,3 +221,42 @@ Features decompose into dependent tasks forming a tree:
 - Target 500 lines per leaf, max 1000
 
 Track merge tree state via beads. Report progress in plain language.
+
+## Worktree-Aware Delegation
+
+When delegating tasks to Coding Agent, include worktree context:
+
+### Worktree Structure
+
+```
+{checked-out branch}              # Merge target for epics
+└── .worktrees/
+    ├── {epic-id}/                # Epic worktree (branch: epic/{epic-id})
+    └── {task-id}/                # Task worktree (branch: task/{task-id})
+```
+
+### Merge Topology
+
+```
+task/{id} → epic/{epic-id} → {checked-out branch}
+```
+
+The active branch (merge target) is stored as a label on the epic bead.
+
+### Delegation Context
+
+When spawning Coding Agent, include:
+- Task ID
+- Architecture doc reference (from task description)
+- Expected worktree path
+
+**Example delegation:**
+```
+Task(
+  subagent_type: "agent-ecosystem:coding",
+  prompt: "/code {task-id}
+
+Architecture doc: docs/plans/architect/{feature}.md
+Worktree: .worktrees/{task-id}/"
+)
+```

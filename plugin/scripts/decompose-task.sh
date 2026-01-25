@@ -2,7 +2,7 @@
 #
 # decompose-task.sh - Create a task bead with branch in epic worktree
 #
-# Usage: decompose-task.sh <epic_id> "Task title" "Description" [blocker_id...]
+# Usage: decompose-task.sh [--arch-doc=<path>] <epic_id> "Task title" "Description" [blocker_id...]
 # Output: task_id on success, exits non-zero on failure
 #
 # This script:
@@ -29,9 +29,12 @@ die() { log_error "$*"; exit 1; }
 
 usage() {
     cat >&2 << EOF
-Usage: $SCRIPT_NAME <epic_id> "Task title" "Description" [blocker_id...]
+Usage: $SCRIPT_NAME [--arch-doc=<path>] <epic_id> "Task title" "Description" [blocker_id...]
 
 Creates a task bead with branch in the epic's worktree.
+
+Options:
+    --arch-doc=<path>   Architecture doc to link in task description
 
 Arguments:
     epic_id         ID of the parent epic (from decompose-init.sh)
@@ -46,6 +49,9 @@ Examples:
     # Create independent task
     task1=\$($SCRIPT_NAME "\$epic_id" "Add middleware" "JWT validation layer")
 
+    # Create task with architecture doc reference
+    task1=\$($SCRIPT_NAME --arch-doc=docs/plans/architect/auth.md "\$epic_id" "Add middleware" "JWT validation")
+
     # Create task blocked by another
     task2=\$($SCRIPT_NAME "\$epic_id" "Add routes" "User endpoints" "\$task1")
 
@@ -56,8 +62,26 @@ EOF
 }
 
 # =============================================================================
-# VALIDATION
+# ARGUMENT PARSING
 # =============================================================================
+
+arch_doc=""
+
+# Parse optional flags
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --arch-doc=*)
+            arch_doc="${1#*=}"
+            shift
+            ;;
+        --*)
+            die "Unknown option: $1"
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
 
 [[ $# -lt 3 ]] && usage
 
@@ -66,6 +90,17 @@ task_title="$2"
 task_description="$3"
 shift 3
 blockers=("$@")
+
+# Append architecture doc reference to description if provided
+if [[ -n "$arch_doc" ]]; then
+    task_description="${task_description}
+
+**Architecture doc:** ${arch_doc}"
+fi
+
+# =============================================================================
+# VALIDATION
+# =============================================================================
 
 # Must be in a git repo
 git rev-parse --git-dir &>/dev/null || die "Not in a git repository"
