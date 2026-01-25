@@ -165,6 +165,34 @@ One sentence describing what this builds.
 - Leaves should be parallelizable
 - Each task = one reviewable unit
 
+## Worktree Topology
+
+When decomposing, tasks are organized in git worktrees:
+
+```
+{checked-out branch}              # Merge target for epics
+└── .worktrees/
+    ├── {epic-id}/                # Epic worktree (branch: epic/{epic-id})
+    └── {task-id}/                # Task worktree (branch: task/{task-id})
+```
+
+**Merge flow:**
+```
+task/{id} → epic/{epic-id} → {checked-out branch}
+```
+
+**Key locations:**
+| Path | Purpose |
+|------|---------|
+| `.worktrees/{epic-id}/` | Epic worktree (merge target for tasks) |
+| `.worktrees/{task-id}/` | Task worktree (isolated work area) |
+| `active-branch` label on epic | Records the checked-out branch for final merge |
+
+**Design doc linkage:** When decomposing, ensure each task description includes:
+```
+**Architecture doc:** docs/plans/architect/<feature>.md
+```
+
 ## Web Search
 
 Use web search for technical research during design:

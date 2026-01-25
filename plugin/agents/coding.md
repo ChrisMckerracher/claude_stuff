@@ -63,27 +63,34 @@ Implement tasks using TDD workflow.
 **Process:**
 1. Read design doc from `docs/plans/architect/<feature-name>.md`
    - If no design found: STOP and say "Run `/architect` first"
-2. Check task is unblocked (`bd ready`)
-3. Claim task (`bd update <id> --status in_progress`)
-4. **REQUIRED:** Spawn QA Agent in parallel:
+2. **Navigate to task worktree (REQUIRED):**
+   ```bash
+   cd .worktrees/{task-id}/
+   git branch --show-current  # Should be: task/{task-id}
+   ```
+   - If worktree doesn't exist: STOP and say "Run `/decompose` first"
+   - All edits MUST happen in the worktree, not the main repo
+3. Check task is unblocked (`bd ready`)
+4. Claim task (`bd update <id> --status in_progress`)
+5. **REQUIRED:** Spawn QA Agent in parallel:
    ```
    Task(subagent_type: "agent-ecosystem:qa", prompt: "Generate tests for task <id> from design doc")
    ```
-5. **REQUIRED:** Use superpowers:test-driven-development
-6. Write failing test first (coordinate with QA agent's tests)
-7. Implement minimal code to pass
-8. Refactor
-9. Verify all tests pass (yours + QA agent's)
-10. **REQUIRED:** Spawn Code Review Agent for handoff:
+6. **REQUIRED:** Use superpowers:test-driven-development
+7. Write failing test first (coordinate with QA agent's tests)
+8. Implement minimal code to pass
+9. Refactor
+10. Verify all tests pass (yours + QA agent's)
+11. **REQUIRED:** Spawn Code Review Agent for handoff:
     ```
     Task(subagent_type: "agent-ecosystem:code-review", prompt: "Code review for task <id>: <changed files>")
     ```
-11. **Handle review feedback:**
+12. **Handle review feedback:**
     - If Code Review approves → proceed to Pre-Commit Gate
-    - If **internal issues** (DRY, YAGNI, complexity) → iterate (go to step 7)
+    - If **internal issues** (DRY, YAGNI, complexity) → iterate (go to step 8)
     - If **architecture issues** → STOP, flag to human: "Architecture concern raised - needs Architect review"
-12. **Pre-Commit Gate** (see below)
-13. Close task only after Code Review approval AND human commit approval
+13. **Pre-Commit Gate** (see below)
+14. Close task only after Code Review approval AND human commit approval
 
 **Output:** Working code with tests, Code Review approved
 
@@ -103,6 +110,17 @@ After implementation is complete and Code Review approves, before any git commit
 4. **On approval:** Create commit with appropriate message
 
 **CRITICAL:** The Coding Agent must NEVER automatically commit changes. Always pause and explicitly ask for human approval before any git commit operation. Silence is not approval - wait for explicit confirmation.
+
+## Commit Location
+
+All commits happen in the **task worktree** on the **task branch**:
+
+```
+Location: .worktrees/{task-id}/
+Branch: task/{task-id}
+```
+
+After commit, use `/task-complete` to merge task → epic → main branch.
 
 ## Scope Rules
 
