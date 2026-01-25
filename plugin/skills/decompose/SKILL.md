@@ -12,23 +12,32 @@ Break a feature into a merge tree of tasks with proper dependencies.
 1. **Analyze** the design doc or feature description
 2. **Identify** natural boundaries (components, layers, files)
 3. **Plan** tasks targeting ~500 lines each (max 1000)
-4. **Create epic** with worktree:
+4. **Link architecture doc** - each task description MUST include:
+   ```
+   **Architecture doc:** docs/plans/architect/<feature>.md
+   ```
+5. **Create epic** with worktree:
    ```bash
    epic_id=$(${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-init.sh "Feature Name" "Description")
    ```
-5. **Create tasks** with dependencies:
+6. **Create tasks** with dependencies (include arch doc in description):
    ```bash
+   # Task description includes architecture doc reference
+   desc="Implement X
+
+**Architecture doc:** docs/plans/architect/feature-name.md"
+
    # Independent tasks (can run in parallel)
-   task1=$(${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-task.sh "$epic_id" "Task 1" "Description")
-   task2=$(${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-task.sh "$epic_id" "Task 2" "Description")
+   task1=$(${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-task.sh "$epic_id" "Task 1" "$desc")
+   task2=$(${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-task.sh "$epic_id" "Task 2" "$desc")
 
    # Dependent task (blocked by task1)
-   task3=$(${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-task.sh "$epic_id" "Task 3" "Description" "$task1")
+   task3=$(${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-task.sh "$epic_id" "Task 3" "$desc" "$task1")
 
    # Task blocked by multiple
-   task4=$(${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-task.sh "$epic_id" "Task 4" "Description" "$task1" "$task2")
+   task4=$(${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-task.sh "$epic_id" "Task 4" "$desc" "$task1" "$task2")
    ```
-6. **Report** task tree to user
+7. **Report** task tree to user
 
 ## Scripts
 
@@ -79,22 +88,29 @@ Ready to work: middleware
 ## Example
 
 ```bash
-# User asks: "Decompose the auth feature from docs/plans/auth-design.md"
+# User asks: "Decompose the auth feature from docs/plans/architect/auth-design.md"
 
 # 1. Agent reads design, identifies 3 tasks
+arch_doc="docs/plans/architect/auth-design.md"
 
 # 2. Create epic
 epic_id=$(${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-init.sh "Auth System" "JWT-based user authentication")
 # Output: claude_stuff-abc
 
-# 3. Create tasks
-middleware=$(${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-task.sh "$epic_id" "Auth Middleware" "JWT validation")
+# 3. Create tasks (each description includes architecture doc reference)
+middleware=$(${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-task.sh "$epic_id" "Auth Middleware" "JWT validation middleware
+
+**Architecture doc:** $arch_doc")
 # Output: claude_stuff-def
 
-routes=$(${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-task.sh "$epic_id" "User Routes" "API endpoints" "$middleware")
+routes=$(${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-task.sh "$epic_id" "User Routes" "User API endpoints
+
+**Architecture doc:** $arch_doc" "$middleware")
 # Output: claude_stuff-ghi
 
-tests=$(${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-task.sh "$epic_id" "Auth Tests" "Integration tests" "$middleware" "$routes")
+tests=$(${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-task.sh "$epic_id" "Auth Tests" "Integration tests
+
+**Architecture doc:** $arch_doc" "$middleware" "$routes")
 # Output: claude_stuff-jkl
 
 # 4. Report to user
