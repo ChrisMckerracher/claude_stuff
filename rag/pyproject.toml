@@ -3,7 +3,13 @@ name = "rag"
 version = "0.1.0"
 description = "Code Boundaries RAG — retrieval-augmented generation for heterogeneous codebases"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "tree-sitter>=0.22",
+    "tree-sitter-go>=0.21",
+    "tree-sitter-c-sharp>=0.21",
+    "tree-sitter-python>=0.21",
+    "tree-sitter-typescript>=0.21",
+]
 
 [dependency-groups]
 dev = [
