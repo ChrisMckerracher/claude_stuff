@@ -1,0 +1,218 @@
+[
+  {
+    "id": "1",
+    "text": "Contact Jane Smith at jane.smith@example.com",
+    "entities": [
+      {"type": "PERSON", "start": 8, "end": 18, "text": "Jane Smith"},
+      {"type": "EMAIL_ADDRESS", "start": 22, "end": 44, "text": "jane.smith@example.com"}
+    ]
+  },
+  {
+    "id": "2",
+    "text": "Call Dr. Robert Wilson at (555) 123-4567",
+    "entities": [
+      {"type": "PERSON", "start": 5, "end": 24, "text": "Dr. Robert Wilson"},
+      {"type": "PHONE_NUMBER", "start": 28, "end": 42, "text": "(555) 123-4567"}
+    ]
+  },
+  {
+    "id": "3",
+    "text": "SSN: 123-45-6789 belongs to Michael Johnson",
+    "entities": [
+      {"type": "US_SSN", "start": 5, "end": 16, "text": "123-45-6789"},
+      {"type": "PERSON", "start": 28, "end": 43, "text": "Michael Johnson"}
+    ]
+  },
+  {
+    "id": "4",
+    "text": "Email sent to sarah.j@company.com and bob@client.org",
+    "entities": [
+      {"type": "EMAIL_ADDRESS", "start": 14, "end": 33, "text": "sarah.j@company.com"},
+      {"type": "EMAIL_ADDRESS", "start": 38, "end": 52, "text": "bob@client.org"}
+    ]
+  },
+  {
+    "id": "5",
+    "text": "Patient Maria Garcia, DOB 03/15/1985, MRN: 12345678",
+    "entities": [
+      {"type": "PERSON", "start": 8, "end": 20, "text": "Maria Garcia"},
+      {"type": "DATE_TIME", "start": 26, "end": 36, "text": "03/15/1985"}
+    ]
+  },
+  {
+    "id": "6",
+    "text": "Phone numbers: +1-800-555-1234 and 650.555.9876",
+    "entities": [
+      {"type": "PHONE_NUMBER", "start": 15, "end": 30, "text": "+1-800-555-1234"},
+      {"type": "PHONE_NUMBER", "start": 35, "end": 47, "text": "650.555.9876"}
+    ]
+  },
+  {
+    "id": "7",
+    "text": "Credit card ending in 4242, holder: Emily Davis",
+    "entities": [
+      {"type": "PERSON", "start": 36, "end": 47, "text": "Emily Davis"}
+    ]
+  },
+  {
+    "id": "8",
+    "text": "The IP address 192.168.1.100 was blocked",
+    "entities": [
+      {"type": "IP_ADDRESS", "start": 15, "end": 28, "text": "192.168.1.100"}
+    ]
+  },
+  {
+    "id": "9",
+    "text": "Meeting with James Wilson and Dr. Patricia Brown tomorrow",
+    "entities": [
+      {"type": "PERSON", "start": 13, "end": 25, "text": "James Wilson"},
+      {"type": "PERSON", "start": 30, "end": 48, "text": "Dr. Patricia Brown"}
+    ]
+  },
+  {
+    "id": "10",
+    "text": "Slack message from @john.doe: Please review",
+    "entities": [
+      {"type": "PERSON", "start": 19, "end": 28, "text": "john.doe"}
+    ]
+  },
+  {
+    "id": "11",
+    "text": "Alert from server at 10.0.0.50 - disk full",
+    "entities": [
+      {"type": "IP_ADDRESS", "start": 21, "end": 30, "text": "10.0.0.50"}
+    ]
+  },
+  {
+    "id": "12",
+    "text": "Contact Kevin at kevin.thompson@internal.corp for access",
+    "entities": [
+      {"type": "PERSON", "start": 8, "end": 13, "text": "Kevin"},
+      {"type": "EMAIL_ADDRESS", "start": 17, "end": 47, "text": "kevin.thompson@internal.corp"}
+    ]
+  },
+  {
+    "id": "13",
+    "text": "The patient with SSN 987-65-4321 needs follow-up",
+    "entities": [
+      {"type": "US_SSN", "start": 21, "end": 32, "text": "987-65-4321"}
+    ]
+  },
+  {
+    "id": "14",
+    "text": "Alexandra Kim approved the PR yesterday",
+    "entities": [
+      {"type": "PERSON", "start": 0, "end": 13, "text": "Alexandra Kim"}
+    ]
+  },
+  {
+    "id": "15",
+    "text": "Send report to legal@company.com by Friday",
+    "entities": [
+      {"type": "EMAIL_ADDRESS", "start": 15, "end": 32, "text": "legal@company.com"}
+    ]
+  },
+  {
+    "id": "16",
+    "text": "Driver license #D1234567 for Carlos Rodriguez",
+    "entities": [
+      {"type": "PERSON", "start": 29, "end": 45, "text": "Carlos Rodriguez"}
+    ]
+  },
+  {
+    "id": "17",
+    "text": "Call 1-800-FLOWERS or (212) 555-0199 for orders",
+    "entities": [
+      {"type": "PHONE_NUMBER", "start": 22, "end": 36, "text": "(212) 555-0199"}
+    ]
+  },
+  {
+    "id": "18",
+    "text": "Reviewed by Dr. Amanda Foster, MD on 2024-01-15",
+    "entities": [
+      {"type": "PERSON", "start": 12, "end": 32, "text": "Dr. Amanda Foster, MD"},
+      {"type": "DATE_TIME", "start": 36, "end": 46, "text": "2024-01-15"}
+    ]
+  },
+  {
+    "id": "19",
+    "text": "Michelle Lee (mlee@lawfirm.com) will handle the case",
+    "entities": [
+      {"type": "PERSON", "start": 0, "end": 12, "text": "Michelle Lee"},
+      {"type": "EMAIL_ADDRESS", "start": 14, "end": 30, "text": "mlee@lawfirm.com"}
+    ]
+  },
+  {
+    "id": "20",
+    "text": "System admin Lisa Wang reset the password",
+    "entities": [
+      {"type": "PERSON", "start": 13, "end": 22, "text": "Lisa Wang"}
+    ]
+  },
+  {
+    "id": "21",
+    "text": "Hello nil and null - these are not names",
+    "entities": []
+  },
+  {
+    "id": "22",
+    "text": "The redis and docker services are running on master",
+    "entities": []
+  },
+  {
+    "id": "23",
+    "text": "func main() { admin := true }",
+    "entities": []
+  },
+  {
+    "id": "24",
+    "text": "Check nginx and kafka logs for localhost errors",
+    "entities": []
+  },
+  {
+    "id": "25",
+    "text": "Jennifer sent the docs to David at david.chen@company.org",
+    "entities": [
+      {"type": "PERSON", "start": 0, "end": 8, "text": "Jennifer"},
+      {"type": "PERSON", "start": 27, "end": 32, "text": "David"},
+      {"type": "EMAIL_ADDRESS", "start": 36, "end": 57, "text": "david.chen@company.org"}
+    ]
+  },
+  {
+    "id": "26",
+    "text": "Ticket assigned to Michael O'Brien - priority high",
+    "entities": [
+      {"type": "PERSON", "start": 19, "end": 34, "text": "Michael O'Brien"}
+    ]
+  },
+  {
+    "id": "27",
+    "text": "Account SSN: 555-12-3456, holder: Sarah Williams",
+    "entities": [
+      {"type": "US_SSN", "start": 13, "end": 24, "text": "555-12-3456"},
+      {"type": "PERSON", "start": 34, "end": 48, "text": "Sarah Williams"}
+    ]
+  },
+  {
+    "id": "28",
+    "text": "David Park called at 408-555-1234 regarding the project",
+    "entities": [
+      {"type": "PERSON", "start": 0, "end": 10, "text": "David Park"},
+      {"type": "PHONE_NUMBER", "start": 21, "end": 33, "text": "408-555-1234"}
+    ]
+  },
+  {
+    "id": "29",
+    "text": "The test server 172.16.0.1 is responding slowly",
+    "entities": [
+      {"type": "IP_ADDRESS", "start": 16, "end": 26, "text": "172.16.0.1"}
+    ]
+  },
+  {
+    "id": "30",
+    "text": "Forward to bob.thompson@client-corp.org for approval",
+    "entities": [
+      {"type": "EMAIL_ADDRESS", "start": 11, "end": 39, "text": "bob.thompson@client-corp.org"}
+    ]
+  }
+]
