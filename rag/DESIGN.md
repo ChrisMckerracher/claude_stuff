@@ -1872,3 +1872,333 @@ Adding a new data source (e.g., Confluence wiki pages) requires exactly these st
    ```
 
 5. **Done.** The scrub gate, embedder, and indexer handle it automatically because `DOC_CONFLUENCE` carries `MAYBE_SENSITIVE` sensitivity and `"nlp"` tokenizer setting. No changes to any other pipeline stage.
+
+### 15.12 Incremental and Additive Ingestion
+
+The pipeline must support three real-world scenarios without requiring a full re-crawl of everything:
+
+| Scenario | Example | What changes |
+|----------|---------|-------------|
+| **Update** | Code in `auth-service` repo changed | Re-crawl changed files in that repo only |
+| **Add source** | Adding Slack export for the first time | Crawl new source, append to existing index |
+| **Add repo** | Onboarding `billing-service` repo | Crawl new repo, append to existing index |
+
+All three are handled by the same mechanism: **the manifest tracks what's indexed, the pipeline compares against it, and only processes the delta.**
+
+#### Why a framework still doesn't help here
+
+This is the exact scenario where Dagster's "asset staleness" or Prefect's "caching" would apply — tracking which assets are up-to-date and only re-materializing stale ones. But our staleness check is:
+
+```python
+current_hash = git_rev_parse(repo_path)
+last_hash = manifest["repos"].get(repo_name, {}).get("last_git_hash")
+needs_recrawl = current_hash != last_hash
+```
+
+That's one git command per repo. A framework would wrap this in asset metadata, staleness sensors, and a scheduling daemon — infrastructure that exists to solve distributed multi-team orchestration problems we don't have. Our manifest.json **is** the staleness tracker.
+
+#### Manifest Schema (extended)
+
+```python
+@dataclass
+class SourceManifest:
+    """Per-source tracking in manifest.json.
+
+    Every CrawlSource that has been ingested gets an entry.
+    This is how the pipeline knows what's already indexed.
+    """
+    source_kind: str              # SourceKind.value
+    path_hash: str                # sha256 of canonical path (for identity)
+    repo_name: str | None
+    last_git_hash: str | None     # for REPO sources (git rev-parse HEAD)
+    last_file_hash: str | None    # for file sources (sha256 of file content)
+    last_ingest_at: str           # ISO 8601
+    chunk_count: int
+    corpus_types_indexed: list[str]  # which corpus types came from this source
+
+
+@dataclass
+class IngestManifest:
+    """Root manifest. Serialized to data/manifest.json."""
+    version: int = 1
+    created_at: str = ""
+    updated_at: str = ""
+    total_chunk_count: int = 0
+    sources: dict[str, SourceManifest] = field(default_factory=dict)
+    corpus_counts: dict[str, int] = field(default_factory=dict)
+    service_count: int = 0
+    edge_count: int = 0
+```
+
+#### Staleness Detection per Source Kind
+
+```python
+class StalenessChecker:
+    """Determines which sources need re-crawling."""
+
+    def __init__(self, manifest: IngestManifest):
+        self._manifest = manifest
+
+    def check(self, source: CrawlSource) -> StalenessResult:
+        key = self._source_key(source)
+        existing = self._manifest.sources.get(key)
+
+        if existing is None:
+            return StalenessResult(status="new", reason="never indexed")
+
+        if source.source_kind == SourceKind.REPO:
+            current_hash = git_rev_parse(source.path)
+            if current_hash != existing.last_git_hash:
+                return StalenessResult(
+                    status="stale",
+                    reason=f"git hash changed: {existing.last_git_hash[:8]}→{current_hash[:8]}",
+                    changed_files=git_diff_names(source.path, existing.last_git_hash),
+                )
+            return StalenessResult(status="fresh")
+
+        if source.source_kind in (SourceKind.SLACK_EXPORT, SourceKind.GOOGLE_DOCS_DIR):
+            current_hash = file_content_hash(source.path)
+            if current_hash != existing.last_file_hash:
+                return StalenessResult(status="stale", reason="file content changed")
+            return StalenessResult(status="fresh")
+
+        # Transcript/runbook dirs: check if any files are newer
+        if source.source_kind in (SourceKind.TRANSCRIPT_DIR, SourceKind.RUNBOOK_DIR):
+            newest_mtime = max_mtime_in_dir(source.path)
+            if newest_mtime > existing.last_ingest_at:
+                return StalenessResult(status="stale", reason="new files in directory")
+            return StalenessResult(status="fresh")
+
+        return StalenessResult(status="stale", reason="unknown source kind")
+
+
+@dataclass
+class StalenessResult:
+    status: str                      # "new", "stale", "fresh"
+    reason: str = ""
+    changed_files: list[str] | None = None  # for REPO, only files that changed
+```
+
+#### Updated Pipeline Orchestrator (Incremental-Aware)
+
+```python
+class IngestPipeline:
+    """Orchestrates full or incremental ingestion.
+
+    The typed pipeline (RawChunk → CleanChunk → EmbeddedChunk) is
+    identical for both modes. The only difference is WHICH sources
+    get crawled and whether old chunks are deleted first.
+    """
+
+    def __init__(
+        self,
+        output_dir: Path,
+        scrubber: Scrubber,
+        embedder: Embedder,
+        indexer: Indexer,
+        batch_size: int = 64,
+    ):
+        self._scrub_gate = ScrubGate(scrubber)
+        self._embedder = embedder
+        self._indexer = indexer
+        self._batch_size = batch_size
+        self._output_dir = output_dir
+        self._manifest = self._load_or_create_manifest()
+        self._staleness = StalenessChecker(self._manifest)
+
+    def ingest(
+        self,
+        sources: list[CrawlSource],
+        incremental: bool = False,
+    ) -> None:
+        """Run the pipeline. If incremental, skip fresh sources."""
+
+        new_chunks: list[CleanChunk] = []
+
+        # ── Phase 1: Determine what needs processing ──────────
+        for source in sources:
+            if incremental:
+                result = self._staleness.check(source)
+                if result.status == "fresh":
+                    logger.info("skipping_fresh", source=source.path)
+                    continue
+                if result.status == "stale":
+                    # Delete old chunks for this source before re-crawling
+                    self._indexer.delete_by_source(source)
+                    logger.info("evicting_stale", source=source.path,
+                                reason=result.reason)
+
+            # ── Phase 2: Crawl + Scrub ────────────────────────
+            crawler_classes = CRAWLER_ROUTING[source.source_kind]
+            for crawler_cls in crawler_classes:
+                crawler = crawler_cls()
+                for raw_chunk in crawler.crawl(source):
+                    clean_chunk = self._scrub_gate.process(raw_chunk)
+                    new_chunks.append(clean_chunk)
+
+        if not new_chunks:
+            logger.info("nothing_to_ingest")
+            return
+
+        # ── Phase 3: Batch Embed ──────────────────────────────
+        for i in range(0, len(new_chunks), self._batch_size):
+            batch = new_chunks[i : i + self._batch_size]
+            embedded = self._embedder.embed_batch(batch)
+            self._indexer.index(embedded)
+
+        # ── Phase 4: Rebuild indices that need full rebuild ───
+        #
+        # LanceDB: incremental (new chunks already written above)
+        # BM25: full rebuild from ALL chunks in LanceDB
+        # Service graph: full rebuild from ALL chunks in LanceDB
+        #
+        self._indexer.finalize()
+
+        # ── Phase 5: Update manifest ──────────────────────────
+        self._update_manifest(sources, new_chunks)
+```
+
+#### What rebuilds when?
+
+This is the critical detail. Different stores have different incremental capabilities:
+
+```
+                         ┌──────────┐
+                         │ LanceDB  │  Supports incremental add + delete
+                         │          │  New chunks: appended
+                         │          │  Stale chunks: deleted before re-crawl
+                         │          │  Untouched chunks: left in place
+                         └──────────┘
+
+                         ┌──────────┐
+                         │ BM25     │  Requires full rebuild
+                         │ Index    │  bm25s doesn't support incremental insert
+                         │          │  Rebuilt from ALL chunks in LanceDB
+                         │          │  Fast: <10s for 500K chunks
+                         └──────────┘
+
+                         ┌──────────┐
+                         │ Service  │  Requires full rebuild
+                         │ Graph    │  Edges may change when any code changes
+                         │          │  Rebuilt from all calls_out + k8s metadata
+                         │          │  Fast: <1s (graph is small)
+                         └──────────┘
+
+                         ┌──────────┐
+                         │ Manifest │  Updated per-source after ingest
+                         │          │  Tracks git hashes, file hashes, timestamps
+                         └──────────┘
+```
+
+#### Incremental flow — concrete example
+
+Starting state: `auth-service` and `frontend` are indexed. Now code changed in `auth-service` and we're adding Slack data for the first time.
+
+```
+python -m rag.crawl \
+    --repo-path ./auth --repo-name auth-service \
+    --repo-path ./frontend --repo-name frontend \
+    --slack-export ./slack.json \
+    --output-dir ./data \
+    --incremental
+
+        │
+        ▼
+┌────────────────────────────────────────────────────────────┐
+│                  STALENESS CHECK                            │
+│                                                             │
+│  auth-service (REPO):                                       │
+│    manifest: last_git_hash = abc123                          │
+│    current:  git rev-parse HEAD = def456                     │
+│    ──► STALE (git hash changed)                              │
+│    ──► identify changed files via git diff                   │
+│    ──► DELETE old auth-service chunks from LanceDB           │
+│                                                             │
+│  frontend (REPO):                                           │
+│    manifest: last_git_hash = 789fed                          │
+│    current:  git rev-parse HEAD = 789fed                     │
+│    ──► FRESH (unchanged)                                     │
+│    ──► SKIP (no crawl, no embed, no delete)                  │
+│                                                             │
+│  slack.json (SLACK_EXPORT):                                  │
+│    manifest: no entry                                        │
+│    ──► NEW (never indexed)                                   │
+│    ──► proceed to crawl                                      │
+└──────────────────────┬─────────────────────────────────────┘
+                       │
+                       │  Only auth-service + slack.json proceed
+                       ▼
+┌────────────────────────────────────────────────────────────┐
+│                  CRAWL + SCRUB                               │
+│                                                             │
+│  auth-service REPO:                                          │
+│    CodeCrawler  ──► RawChunk(CODE_LOGIC) ──► ScrubGate       │
+│    DeployCrawler──► RawChunk(CODE_DEPLOY)──► (CLEAN: pass)   │
+│    ConfigCrawler──► RawChunk(CODE_CONFIG)──► (CLEAN: pass)   │
+│    DocsCrawler  ──► RawChunk(DOC_README) ──► (CLEAN: pass)   │
+│                                                             │
+│  slack.json SLACK_EXPORT:                                    │
+│    SlackCrawler ──► RawChunk(CONVO_SLACK)──► ScrubGate       │
+│                                              (MAYBE: scrub)  │
+└──────────────────────┬─────────────────────────────────────┘
+                       │
+                       │  New CleanChunks only
+                       ▼
+┌────────────────────────────────────────────────────────────┐
+│                  EMBED + INDEX                               │
+│                                                             │
+│  Embed new CleanChunks (auth + slack only)                   │
+│  Append EmbeddedChunks to LanceDB                            │
+│                                                             │
+│  Rebuild BM25 from ALL chunks in LanceDB                     │
+│    (frontend chunks still there, untouched)                  │
+│                                                             │
+│  Rebuild service graph from ALL calls_out                    │
+│                                                             │
+│  Update manifest:                                            │
+│    auth-service: last_git_hash = def456                      │
+│    frontend: unchanged                                       │
+│    slack.json: last_file_hash = sha256(...)                  │
+└────────────────────────────────────────────────────────────┘
+```
+
+**Cost savings:** frontend wasn't re-crawled or re-embedded. If frontend has 10K chunks and embedding takes 30s, that's 30s saved. The BM25 + graph rebuild is seconds regardless.
+
+#### The Indexer Protocol (extended for incremental)
+
+```python
+class Indexer(Protocol):
+    """Writes EmbeddedChunks to persistent stores.
+    Supports both full and incremental ingestion."""
+
+    def index(self, chunks: list[EmbeddedChunk]) -> None:
+        """Append new chunks to LanceDB."""
+        ...
+
+    def delete_by_source(self, source: CrawlSource) -> int:
+        """Delete all chunks from a given source.
+        For REPO: delete by repo_name.
+        For SLACK_EXPORT: delete by corpus_type + source_uri.
+        Returns count of deleted chunks."""
+        ...
+
+    def finalize(self) -> None:
+        """Rebuild BM25 index and service graph from
+        all chunks currently in LanceDB."""
+        ...
+
+    def all_chunks(self) -> Iterator[CleanChunk]:
+        """Read all chunks from LanceDB. Used by finalize()
+        to rebuild BM25 and service graph."""
+        ...
+```
+
+#### Why the typed pipeline doesn't change
+
+The incremental logic lives **outside** the type chain. The staleness checker decides which `CrawlSource`s enter the pipeline. Once a source enters, it flows through the exact same path:
+
+```
+CrawlSource → Crawler → RawChunk → ScrubGate → CleanChunk → Embedder → EmbeddedChunk → Indexer
+```
+
+No conditional branches inside the pipeline for "is this incremental?" — that's decided before the pipeline runs. The type invariants (can't embed a RawChunk, sensitivity routing in ScrubGate) hold identically for full and incremental runs.
