@@ -9,12 +9,15 @@ dependencies = [
     "tree-sitter-c-sharp>=0.21",
     "tree-sitter-python>=0.21",
     "tree-sitter-typescript>=0.21",
+    "pyyaml>=6.0",
+    "mistune>=3.0",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=8.0",
     "mypy>=1.8",
+    "types-PyYAML>=6.0",
 ]
 
 [build-system]
