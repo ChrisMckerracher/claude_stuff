@@ -60,7 +60,7 @@ rag/
 │   └── fixtures/
 │       ├── go/
 │       │   ├── simple_handler.go
-│       │   ├── large_function.go     # >512 tokens, tests recursive split
+│       │   ├── large_function.go     # >2048 tokens, tests recursive split
 │       │   ├── http_client.go        # contains http.Get/Post calls
 │       │   └── interfaces.go         # interface + struct declarations
 │       ├── csharp/
@@ -110,13 +110,13 @@ Output: list[ChunkData] (pre-RawChunk, without embedding)
 4. For each boundary node:
    a. Extract text (node.start_byte..node.end_byte)
    b. Count tokens (approximate: split on whitespace, count)
-   c. If ≤ 512 tokens → one chunk
-   d. If > 512 tokens → recurse into child nodes:
-      - Greedily merge sibling nodes until sub-chunk hits 512
+   c. If ≤ 2048 tokens → one chunk
+   d. If > 2048 tokens → recurse into child nodes:
+      - Greedily merge sibling nodes until sub-chunk hits 2048
       - Each sub-chunk gets context_prefix of parent
    e. Build context_prefix: file_path > enclosing_class > symbol_name
 5. For files with no boundary nodes (scripts), use sliding window:
-   - 400-token target, 10% overlap
+   - 1600-token target, 10% overlap
 6. Return list of ChunkData with byte ranges, text, metadata
 ```
 
@@ -316,8 +316,8 @@ Expected: 2 chunks. First has `calls_out` containing an http call. Second too.
 
 **`tests/fixtures/go/large_function.go`:**
 
-A single function with 600+ tokens (lots of switch cases or if-else blocks).
-Expected: splits into 2+ sub-chunks, each ≤512 tokens.
+A single function with 3000+ tokens (lots of switch cases or if-else blocks).
+Expected: splits into 2+ sub-chunks, each ≤2048 tokens.
 
 ### 4.2 Unit Tests: `tests/test_ast_chunker.py`
 
@@ -327,7 +327,7 @@ Expected: splits into 2+ sub-chunks, each ≤512 tokens.
 | `test_go_chunk_context_prefix` | `simple_handler.go` | Prefix is `"handlers/simple_handler.go > GetUser"` |
 | `test_go_chunk_symbol_metadata` | `simple_handler.go` | `symbol_name="GetUser"`, `symbol_kind="function"` |
 | `test_go_chunk_byte_ranges` | `simple_handler.go` | byte_start/end correspond to actual function boundaries |
-| `test_go_large_function_splits` | `large_function.go` | Multiple chunks from one function, each ≤512 tokens |
+| `test_go_large_function_splits` | `large_function.go` | Multiple chunks from one function, each ≤2048 tokens |
 | `test_go_interface_chunking` | `interfaces.go` | Interface + struct are separate chunks |
 | `test_csharp_class_chunking` | `UserController.cs` | Class with methods → one chunk per method |
 | `test_csharp_nested_class` | `LargeClass.cs` | Methods within class get context prefix `"File > Class > Method"` |
@@ -383,7 +383,7 @@ Expected: splits into 2+ sub-chunks, each ≤512 tokens.
 ## 5. Acceptance Criteria
 
 - [ ] `CodeCrawler.crawl()` yields `RawChunk` objects for Go, C#, Python, TS files
-- [ ] Each chunk is ≤512 tokens (or split correctly if the declaration exceeds it)
+- [ ] Each chunk is ≤2048 tokens (or split correctly if the declaration exceeds it)
 - [ ] `context_prefix` follows the `"file > class > symbol"` format
 - [ ] `calls_out` populated for chunks containing service calls
 - [ ] `imports` populated for each file

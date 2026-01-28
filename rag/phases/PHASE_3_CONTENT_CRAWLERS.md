@@ -163,7 +163,7 @@ DOC_TYPE_RULES: list[tuple[str, str]] = [
 
 Default to `DOC_README` if no pattern matches.
 
-**Oversized sections:** If a section exceeds 512 tokens, split on paragraph
+**Oversized sections:** If a section exceeds 2048 tokens, split on paragraph
 boundaries within it. Never split mid-paragraph.
 
 ### 3.4 SlackCrawler
@@ -176,7 +176,7 @@ files, one per day. Each file contains an array of messages.
 1. Group messages by `thread_ts` (thread parent timestamp)
 2. Messages without `thread_ts` are standalone (their own `ts` is the thread)
 3. Each thread becomes one chunk
-4. If a thread exceeds 512 tokens, split at message boundaries (never mid-message)
+4. If a thread exceeds 2048 tokens, split at message boundaries (never mid-message)
 5. Context prefix: `#channel-name > @author > 2024-01-15T10:30:00Z`
 
 **Service reference extraction:** After chunking, scan each chunk's text for
@@ -206,7 +206,7 @@ and resolve later, OR accept a `known_services` set as input.
 [10:32] Alice: Can we mock it for now?
 ```
 
-**Chunking:** Group consecutive speaker turns into chunks of ~400 tokens.
+**Chunking:** Group consecutive speaker turns into chunks of ~1600 tokens.
 Preserve speaker attribution. Never split mid-turn.
 
 **Corpus type:** `CONVO_TRANSCRIPT` (SENSITIVE)
@@ -315,7 +315,7 @@ Expected: 1 thread chunk (all 3 messages in one thread).
 | `test_heading_split` | `deploy-rollback.md` | Chunks split at H2/H3 boundaries |
 | `test_section_path` | `deploy-rollback.md` | `section_path = "## Deploy > ### Rollback"` |
 | `test_nested_headings` | custom | H1 > H2 > H3 hierarchy preserved in section_path |
-| `test_oversized_section` | custom | Section >512 tokens → split on paragraphs |
+| `test_oversized_section` | custom | Section >2048 tokens → split on paragraphs |
 | `test_code_blocks_preserved` | custom | Code blocks inside markdown are kept intact (not split) |
 | `test_empty_sections_skipped` | custom | Heading with no content → no chunk |
 
@@ -325,7 +325,7 @@ Expected: 1 thread chunk (all 3 messages in one thread).
 |------|---------|-----------------|
 | `test_thread_grouping` | `export.json` | Messages with same `thread_ts` → one chunk |
 | `test_standalone_message` | custom | Message without `thread_ts` → own chunk |
-| `test_long_thread_split` | custom | Thread >512 tokens → split at message boundaries |
+| `test_long_thread_split` | custom | Thread >2048 tokens → split at message boundaries |
 | `test_speaker_attribution` | transcript | Speaker names preserved in chunk text |
 | `test_timestamp_extraction` | `export.json` | ISO 8601 timestamp on chunk metadata |
 | `test_never_split_mid_message` | custom | Chunk boundaries are always between messages |

@@ -169,10 +169,10 @@ class Chunk:
 
 1. Parse file into AST via tree-sitter
 2. Walk top-level declarations (functions, methods, classes, interfaces, structs)
-3. Each declaration becomes a chunk if it fits within 512 tokens
-4. If a declaration exceeds 512 tokens, recursively descend into child nodes and greedily merge siblings until each sub-chunk fits
+3. Each declaration becomes a chunk if it fits within 2048 tokens
+4. If a declaration exceeds 2048 tokens, recursively descend into child nodes and greedily merge siblings until each sub-chunk fits
 5. Prepend **context prefix**: `file_path > enclosing_class > symbol_name`
-6. For files with only top-level statements (scripts), use sliding window with 400-token target and 10% overlap
+6. For files with only top-level statements (scripts), use sliding window with 1600-token target and 10% overlap
 
 **Language-specific tree-sitter node types to extract:**
 
@@ -293,7 +293,7 @@ def extract_k8s_metadata(doc: dict) -> dict:
 1. Parse markdown into AST
 2. Split on heading boundaries (H1, H2, H3)
 3. Each section becomes a chunk, with `section_path` capturing the heading hierarchy
-4. If a section exceeds 512 tokens, split on paragraph boundaries within it
+4. If a section exceeds 2048 tokens, split on paragraph boundaries within it
 5. Code blocks inside markdown are tagged with language but **not** AST-parsed (they're documentation, not live code)
 
 **Context prefix format:** `docs/runbooks/deploy.md > ## Rollback > ### Step 3`
@@ -325,8 +325,8 @@ DOC_TYPE_RULES = [
 
 **Chunking strategy:**
 
-1. **Slack:** Group messages by thread (`thread_ts`). Each thread becomes one chunk. If a thread exceeds 512 tokens, split by sliding window over messages (never splitting mid-message).
-2. **Transcripts:** Split on speaker turns. Group consecutive turns into chunks of ~400 tokens. Preserve speaker attribution.
+1. **Slack:** Group messages by thread (`thread_ts`). Each thread becomes one chunk. If a thread exceeds 2048 tokens, split by sliding window over messages (never splitting mid-message).
+2. **Transcripts:** Split on speaker turns. Group consecutive turns into chunks of ~1600 tokens. Preserve speaker attribution.
 3. Prepend context: `#channel-name > @author > 2024-01-15T10:30:00Z`
 
 **Why threads, not individual messages:**
