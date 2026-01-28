@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway-service
+  labels:
+    app: gateway-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: gateway-service
+  template:
+    metadata:
+      labels:
+        app: gateway-service
+    spec:
+      containers:
+      - name: gateway
+        image: gateway-service:v2.0.0
+        env:
+        - name: AUTH_SERVICE_URL
+          value: "http://auth-service:8080/api/v1"
+        - name: USER_SERVICE_URL
+          value: "http://user-service:8080"
+        - name: PAYMENT_SERVICE_URL
+          value: "http://payment-service:9000/payments"
+        - name: NOTIFICATION_QUEUE
+          value: "amqp://rabbitmq:5672/notifications"
