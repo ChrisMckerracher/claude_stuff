@@ -18,11 +18,13 @@ import tree_sitter_python as ts_python
 import tree_sitter_typescript as ts_typescript
 from tree_sitter import Language, Parser, Node
 
+from rag.chunking.token_counter import count_tokens
+
 if TYPE_CHECKING:
     pass
 
 
-# Maximum tokens per chunk (approximate: whitespace-split count)
+# Maximum tokens per chunk (uses model tokenizer for accurate counting)
 MAX_TOKENS = 2048
 # Target tokens for sliding window fallback
 SLIDING_WINDOW_TARGET = 1600
@@ -102,11 +104,6 @@ def _get_language(lang_name: str) -> Language:
         return Language(ts_typescript.language_typescript())
     else:
         raise ValueError(f"Unsupported language: {lang_name}")
-
-
-def _count_tokens(text: str) -> int:
-    """Approximate token count using whitespace splitting."""
-    return len(text.split())
 
 
 def _get_symbol_name(node: Node, source: bytes, language: str) -> str | None:
@@ -243,7 +240,7 @@ def _split_large_node(
     Falls back to sliding window if children are still too large.
     """
     text = source[node.start_byte : node.end_byte].decode("utf-8")
-    tokens = _count_tokens(text)
+    tokens = count_tokens(text)
 
     if tokens <= MAX_TOKENS:
         symbol_name = _get_symbol_name(node, source, language)
@@ -280,7 +277,7 @@ def _split_large_node(
 
     for child in children:
         child_text = source[child.start_byte : child.end_byte].decode("utf-8")
-        child_tokens = _count_tokens(child_text)
+        child_tokens = count_tokens(child_text)
 
         if child_tokens > MAX_TOKENS:
             # Flush current batch if any
@@ -443,7 +440,7 @@ def ast_chunk(source: bytes, language: str, file_path: str) -> list[ChunkData]:
 
     for node, enclosing_class in boundary_nodes:
         text = source[node.start_byte : node.end_byte].decode("utf-8")
-        tokens = _count_tokens(text)
+        tokens = count_tokens(text)
 
         if tokens > MAX_TOKENS:
             # Split large declarations

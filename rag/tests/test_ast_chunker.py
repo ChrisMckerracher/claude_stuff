@@ -8,8 +8,8 @@ from rag.chunking.ast_chunker import (
     ChunkData,
     ast_chunk,
     MAX_TOKENS,
-    _count_tokens,
 )
+from rag.chunking.token_counter import count_tokens
 
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -75,7 +75,7 @@ class TestGoChunking:
         # The large function should either be one chunk if under MAX_TOKENS
         # or split into multiple. Either way, each chunk should be <= MAX_TOKENS
         for chunk in chunks:
-            tokens = _count_tokens(chunk.text)
+            tokens = count_tokens(chunk.text)
             assert tokens <= MAX_TOKENS, f"Chunk has {tokens} tokens, exceeds {MAX_TOKENS}"
 
 
@@ -218,20 +218,19 @@ class TestChunkTextIntegrity:
 
 
 class TestTokenCounting:
-    """Test token counting utility."""
-
-    def test_count_tokens_simple(self) -> None:
-        """Test basic token counting."""
-        assert _count_tokens("hello world") == 2
-        assert _count_tokens("one two three four five") == 5
+    """Test token counting utility in AST chunker context."""
 
     def test_count_tokens_empty(self) -> None:
         """Test empty string."""
-        assert _count_tokens("") == 0
-        assert _count_tokens("   ") == 0
+        assert count_tokens("") == 0
 
     def test_count_tokens_code(self) -> None:
         """Test token counting on code-like text."""
         code = "func main() { fmt.Println(\"hello\") }"
-        tokens = _count_tokens(code)
+        tokens = count_tokens(code)
         assert tokens > 0
+
+    def test_count_tokens_consistency(self) -> None:
+        """Test token counting is consistent."""
+        code = "func GetUser(id string) (*User, error)"
+        assert count_tokens(code) == count_tokens(code)

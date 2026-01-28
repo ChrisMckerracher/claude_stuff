@@ -11,8 +11,10 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from rag.chunking.token_counter import count_tokens
 
-# Maximum tokens per chunk (approximate: whitespace-split count)
+
+# Maximum tokens per chunk (uses model tokenizer for accurate counting)
 MAX_TOKENS = 2048
 # Target tokens for chunking
 TARGET_TOKENS = 1600
@@ -44,11 +46,6 @@ class SlackMessage:
     thread_ts: str | None
     user: str
     text: str
-
-
-def _count_tokens(text: str) -> int:
-    """Approximate token count using whitespace splitting."""
-    return len(text.split())
 
 
 def _ts_to_iso(ts: str) -> str:
@@ -180,7 +177,7 @@ def _chunk_thread(
 
     # Check total size
     full_text = "\n".join(formatted)
-    total_tokens = _count_tokens(full_text)
+    total_tokens = count_tokens(full_text)
 
     if total_tokens <= MAX_TOKENS:
         # Single chunk for whole thread
@@ -210,7 +207,7 @@ def _chunk_thread(
     first_msg_idx = 0
 
     for i, (msg, formatted_msg) in enumerate(zip(messages, formatted)):
-        msg_tokens = _count_tokens(formatted_msg)
+        msg_tokens = count_tokens(formatted_msg)
 
         if current_tokens + msg_tokens > MAX_TOKENS and current_messages:
             # Create chunk from current messages
@@ -357,7 +354,7 @@ def chunk_transcript(
 
     for turn in turns:
         formatted = f"[{turn.timestamp}] {turn.speaker}: {turn.text}"
-        turn_tokens = _count_tokens(formatted)
+        turn_tokens = count_tokens(formatted)
 
         if current_tokens + turn_tokens > TARGET_TOKENS and current_turns:
             # Create chunk from current turns

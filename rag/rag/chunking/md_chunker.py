@@ -11,8 +11,10 @@ from typing import Any
 
 import mistune
 
+from rag.chunking.token_counter import count_tokens
 
-# Maximum tokens per chunk (approximate: whitespace-split count)
+
+# Maximum tokens per chunk (uses model tokenizer for accurate counting)
 MAX_TOKENS = 2048
 
 
@@ -28,11 +30,6 @@ class MarkdownChunkData:
     byte_end: int
     context_prefix: str
     section_path: str
-
-
-def _count_tokens(text: str) -> int:
-    """Approximate token count using whitespace splitting."""
-    return len(text.split())
 
 
 def _extract_headings_and_content(tokens: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -184,7 +181,7 @@ def _split_on_paragraphs(text: str, max_tokens: int) -> list[str]:
     Returns:
         List of text chunks
     """
-    if _count_tokens(text) <= max_tokens:
+    if count_tokens(text) <= max_tokens:
         return [text]
 
     # Split on double newlines (paragraphs)
@@ -194,7 +191,7 @@ def _split_on_paragraphs(text: str, max_tokens: int) -> list[str]:
     current_tokens = 0
 
     for para in paragraphs:
-        para_tokens = _count_tokens(para)
+        para_tokens = count_tokens(para)
 
         if para_tokens > max_tokens:
             # Single paragraph too large - split on single newlines
@@ -208,7 +205,7 @@ def _split_on_paragraphs(text: str, max_tokens: int) -> list[str]:
             line_tokens = 0
 
             for line in lines:
-                line_token_count = _count_tokens(line)
+                line_token_count = count_tokens(line)
                 if line_tokens + line_token_count > max_tokens and line_chunk:
                     chunks.append("\n".join(line_chunk))
                     line_chunk = []
@@ -299,7 +296,7 @@ def markdown_chunk(content: bytes, file_path: str) -> list[MarkdownChunkData]:
                 continue
 
         # Check if section needs splitting
-        if _count_tokens(section_text) > MAX_TOKENS:
+        if count_tokens(section_text) > MAX_TOKENS:
             # Split on paragraph boundaries
             sub_chunks = _split_on_paragraphs(section_text, MAX_TOKENS)
             for i, sub_text in enumerate(sub_chunks):
