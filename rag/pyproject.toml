@@ -17,6 +17,14 @@ dependencies = [
     "spacy>=3.7",
     "detect-secrets>=1.4",
     "faker>=22.0",
+    # Phase 5: Embedding & Storage
+    "sentence-transformers>=3.0",
+    "torch>=2.0",
+    "lancedb>=0.8",
+    "pyarrow>=14.0",
+    "pandas>=2.0",
+    "bm25s>=0.2",
+    "networkx>=3.0",
 ]
 
 [dependency-groups]
@@ -48,6 +56,18 @@ module = [
     "faker.*",
     "spacy",
     "spacy.*",
+    "sentence_transformers",
+    "sentence_transformers.*",
+    "torch",
+    "torch.*",
+    "lancedb",
+    "lancedb.*",
+    "pyarrow",
+    "pyarrow.*",
+    "bm25s",
+    "bm25s.*",
+    "networkx",
+    "networkx.*",
 ]
 ignore_missing_imports = true
 
