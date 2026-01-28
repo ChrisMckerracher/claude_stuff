@@ -1,0 +1,28 @@
+Meeting Transcript - Project Phoenix Standup
+Date: March 15, 2024
+
+[00:00:15] David Chen: Good morning everyone. Let's start with status updates.
+
+[00:00:32] Jennifer Martinez: Hi David. I finished the API integration yesterday.
+I emailed the results to jennifer.m@company.com and also CC'd the client at
+bob.thompson@client-corp.org.
+
+[00:01:15] David Chen: Great work, Jennifer. Did you get a chance to review the
+security findings from last week?
+
+[00:01:45] Michael O'Brien: I can speak to that. The penetration test revealed
+some issues with the server at 192.168.1.100. We've already patched most of them.
+Also, I noticed someone committed an AWS key - AKIAIOSFODNN7EXAMPLE - to the repo.
+That's been rotated.
+
+[00:02:30] Sarah Williams: Quick note - the patient records system needs review.
+We found entries with SSNs like 987-65-4321 in the test database that should have
+been scrubbed.
+
+[00:03:00] David Chen: Thanks Sarah. Please coordinate with our compliance officer,
+Dr. Amanda Foster, before the end of the week. Her direct line is (415) 555-0123.
+
+[00:03:30] Jennifer Martinez: Will do. I'll also loop in the legal team at
+legal-team@company.internal.corp.
+
+[00:04:00] END OF TRANSCRIPT
