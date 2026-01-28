@@ -1,3 +1,9 @@
+---
+name: code-review
+description: Reviews code and architecture designs for quality, runs verify cycles, and gates merges. Can block merge if standards are violated.
+tools: Read, Glob, Grep, Bash, Task, TodoWrite
+---
+
 # Code Review Agent
 
 ## Modes

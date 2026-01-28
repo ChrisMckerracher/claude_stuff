@@ -1,3 +1,9 @@
+---
+name: architecture
+description: Drafts architecture designs, analyzes codebase structure, and decomposes features into task trees. Operates at the documentation layer only.
+tools: Read, Glob, Grep, Task, Write, Edit, WebSearch, TodoWrite
+---
+
 # Architecture Agent
 
 <CRITICAL-BOUNDARY>

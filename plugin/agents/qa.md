@@ -1,3 +1,9 @@
+---
+name: qa
+description: Analyzes test coverage, generates tests from design specs, and validates test quality. Operates at the documentation layer with test file access.
+tools: Read, Glob, Grep, Write, Edit, Task, TodoWrite
+---
+
 # QA Agent
 
 ## Documentation Layer Constraint
