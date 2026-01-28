@@ -7,7 +7,7 @@ We need a retrieval-augmented generation system that understands **code boundari
 The system must:
 
 1. Parse and chunk code with structural awareness (functions, classes, modules, service contracts)
-2. Map cross-service relationships (HTTP calls, gRPC, message queues, shared DB access)
+2. Map cross-service relationships (HTTP calls, message queues, shared DB access)
 3. Ingest non-code content (Slack threads, runbooks, transcripts, markdown docs) with appropriate chunking
 4. Provide a **single query interface** that searches all content types, while preserving type-specific semantics
 5. Use hybrid retrieval (dense embeddings + sparse BM25) for high recall and precision
@@ -17,8 +17,8 @@ The system must:
 
 | Language   | Role                        | Service Contract Patterns                          |
 |------------|-----------------------------|----------------------------------------------------|
-| Go         | Primary backend services    | Interfaces, gRPC proto, HTTP handlers, clients     |
-| C#         | Primary backend services    | Interfaces, Controllers, HttpClient, gRPC stubs    |
+| Go         | Primary backend services    | Interfaces, HTTP handlers, HTTP clients             |
+| C#         | Primary backend services    | Interfaces, Controllers, HttpClient                 |
 | Python     | Supporting services         | FastAPI/Flask routes, requests/httpx calls          |
 | TypeScript | Frontend + one backend svc  | fetch/axios calls, Express/NestJS controllers      |
 
@@ -39,6 +39,10 @@ The system must:
 │         └───────────┬───────┘                     │          │
 │                     ▼                             │          │
 │           Reciprocal Rank Fusion                  │          │
+│                     │                             │          │
+│                     ▼                             │          │
+│           Cross-Encoder Reranker                  │          │
+│           (top-N refinement)                      │          │
 │                     │                             │          │
 │                     ▼                             │          │
 │              Merged Results ◄─────────────────────┘          │
@@ -129,6 +133,9 @@ class Chunk:
     # Embedding
     vector: list[float]        # dense embedding (768-dim, CodeRankEmbed)
 
+    # Multi-repo
+    repo_name: str | None      # e.g. "auth-service", "frontend", derived from repo dir name
+
     # Metadata (type-specific fields are nullable)
     language: str | None       # go, csharp, python, typescript, yaml, markdown, None
     symbol_name: str | None    # function/class/method name (code only)
@@ -206,21 +213,18 @@ After chunking, each code chunk is analyzed for outbound service calls. This pop
 SERVICE_CALL_PATTERNS = {
     "go": [
         r'http\.(Get|Post|Put|Delete|Do)\(',          # net/http
-        r'\.Invoke\(',                                  # gRPC
-        r'proto\.\w+Client',                           # gRPC generated client
+        r'\.NewRequest\(',                             # http.NewRequest
         r'\.Publish\(|\.Subscribe\(',                  # message queue
         r'sql\.Open\(|\.QueryRow\(|\.Exec\(',          # database
     ],
     "c_sharp": [
         r'HttpClient\.(Get|Post|Put|Delete)Async\(',   # HttpClient
-        r'\.CallAsync\(|\.AsyncUnaryCall\(',           # gRPC
         r'IServiceBus\.Publish|\.Send\(',              # message bus
         r'DbContext\.|\.ExecuteSqlRaw\(',              # EF Core / DB
     ],
     "python": [
         r'requests\.(get|post|put|delete)\(',          # requests
         r'httpx\.(get|post|put|delete|AsyncClient)',   # httpx
-        r'\.stub\.\w+\(|grpc\.',                       # gRPC
     ],
     "typescript": [
         r'fetch\(|axios\.(get|post|put|delete)\(',     # HTTP
@@ -514,6 +518,7 @@ schema = pa.schema([
     pa.field("calls_out", pa.list_(pa.string())),
     pa.field("called_by", pa.list_(pa.string())),
     pa.field("service_name", pa.string()),
+    pa.field("repo_name", pa.string()),
 ])
 
 db = lancedb.connect("data/rag.lance")
@@ -530,7 +535,7 @@ Beyond flat retrieval, we build an explicit **service dependency graph** that ca
 
 After the code and deploy crawlers finish, we have:
 
-- From **code chunks**: `calls_out` (HTTP/gRPC/queue calls detected per function)
+- From **code chunks**: `calls_out` (HTTP/queue calls detected per function)
 - From **deploy YAMLs**: service names, ports, network policies, env var references
 - From **conversations**: service name mentions in incident threads
 
@@ -550,7 +555,7 @@ class ServiceNode:
 class ServiceEdge:
     source: str                      # calling service
     target: str                      # called service
-    edge_type: str                   # "http", "grpc", "queue", "db", "unknown"
+    edge_type: str                   # "http", "queue", "db", "unknown"
     evidence_chunk_ids: list[str]    # chunks where this call was detected
     url_pattern: str | None          # e.g. "/api/v1/users/{id}"
 ```
@@ -610,8 +615,11 @@ class QueryRequest:
     text: str
     corpus_filter: list[str] | None = None   # e.g. ["CODE_LOGIC", "DOC_RUNBOOK"]
     service_filter: str | None = None         # e.g. "auth-service"
+    repo_filter: list[str] | None = None     # e.g. ["auth-service", "frontend"]
     top_k: int = 20
     expand_graph: bool = False                # include graph neighbors
+    freshness_half_life_days: float = 90.0   # conversation recency decay (0=disabled)
+    freshness_weight: float = 0.1            # how much freshness affects score (0=disabled)
 
 @dataclass
 class QueryResult:
@@ -656,14 +664,25 @@ def query(req: QueryRequest) -> QueryResult:
     if req.service_filter:
         fused = [h for h in fused if h.service_name == req.service_filter]
 
-    # 5. Graph expansion
+    # 5. Rerank top candidates via cross-encoder
+    reranked = rerank(req.text, fused[:50], top_k=req.top_k)
+
+    # 6. Apply freshness boost to conversation chunks
+    if req.freshness_weight > 0 and req.freshness_half_life_days > 0:
+        reranked = apply_freshness_boost(
+            reranked,
+            half_life_days=req.freshness_half_life_days,
+            boost_weight=req.freshness_weight,
+        )
+
+    # 7. Graph expansion
     service_context = None
     if req.expand_graph:
-        mentioned_services = extract_services_from_results(fused[:req.top_k])
+        mentioned_services = extract_services_from_results(reranked[:req.top_k])
         service_context = graph.get_neighborhood(mentioned_services, depth=1)
 
     return QueryResult(
-        chunks=fused[:req.top_k],
+        chunks=reranked[:req.top_k],
         service_context=service_context,
     )
 ```
@@ -688,7 +707,91 @@ def reciprocal_rank_fusion(
     return [entry["item"] for entry in ranked]
 ```
 
-### 7.4 Corpus-Aware Behavior at Query Time
+### 7.4 Cross-Encoder Reranker
+
+After RRF fusion, the top-N candidates (default N=50) are refined by a cross-encoder reranker. Unlike bi-encoders (which embed query and document independently), cross-encoders jointly attend over the query-document pair, producing significantly more accurate relevance scores at the cost of higher latency.
+
+**Model:** `cross-encoder/ms-marco-MiniLM-L-6-v2` (22M params, ~10ms per pair on CPU)
+
+This is the starting point. If code-specific reranking quality is insufficient, upgrade to one of:
+
+| Model | Params | Latency (CPU) | Notes |
+|-------|--------|---------------|-------|
+| `cross-encoder/ms-marco-MiniLM-L-6-v2` | 22M | ~10ms/pair | General-purpose, fast |
+| `BAAI/bge-reranker-v2-m3` | 568M | ~50ms/pair | Multilingual, stronger |
+| `nomic-ai/CodeRankLLM` | 7B | ~200ms/pair | Code-specific, highest quality, needs GPU |
+
+**Integration in the query pipeline:**
+
+```python
+from sentence_transformers import CrossEncoder
+
+reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+
+def rerank(query: str, candidates: list[dict], top_k: int = 20) -> list[dict]:
+    """Rerank RRF candidates using cross-encoder."""
+    pairs = [(query, c["text"]) for c in candidates]
+    scores = reranker.predict(pairs)
+    for candidate, score in zip(candidates, scores):
+        candidate["rerank_score"] = float(score)
+    ranked = sorted(candidates, key=lambda c: c["rerank_score"], reverse=True)
+    return ranked[:top_k]
+```
+
+**When to use:** Always. The reranker runs on the top-50 RRF results (not the full corpus), so latency is bounded: 50 pairs * 10ms = ~500ms on CPU. This is acceptable for interactive queries and negligible for batch pipelines.
+
+### 7.5 Conversation Freshness Weighting
+
+For conversation-type chunks (`CONVO_SLACK`, `CONVO_TRANSCRIPT`), recency can be factored into the final score. This is applied as an optional post-rerank multiplier — not baked into embeddings.
+
+```python
+import math
+from datetime import datetime, timezone
+
+def apply_freshness_boost(
+    results: list[dict],
+    half_life_days: float = 90.0,
+    boost_weight: float = 0.1,
+) -> list[dict]:
+    """Apply exponential time-decay boost to conversation chunks.
+
+    Args:
+        half_life_days: Days until the boost halves. 90 = 3-month half-life.
+        boost_weight: How much freshness affects the final score (0-1).
+            0.1 means freshness is 10% of the score, relevance is 90%.
+    """
+    now = datetime.now(timezone.utc)
+    for r in results:
+        if r.get("corpus_type", "").startswith("CONVO_") and r.get("timestamp"):
+            ts = datetime.fromisoformat(r["timestamp"])
+            age_days = (now - ts).total_seconds() / 86400
+            decay = math.exp(-0.693 * age_days / half_life_days)  # 0.693 = ln(2)
+            r["final_score"] = (
+                (1 - boost_weight) * r.get("rerank_score", 0)
+                + boost_weight * decay
+            )
+        else:
+            r["final_score"] = r.get("rerank_score", 0)
+    return sorted(results, key=lambda r: r["final_score"], reverse=True)
+```
+
+**Configuration:** Exposed as optional `QueryRequest` parameters:
+
+```python
+@dataclass
+class QueryRequest:
+    text: str
+    corpus_filter: list[str] | None = None
+    service_filter: str | None = None
+    top_k: int = 20
+    expand_graph: bool = False
+    freshness_half_life_days: float = 90.0   # 0 = disabled
+    freshness_weight: float = 0.1            # 0 = disabled
+```
+
+When `freshness_half_life_days` is 0 or `freshness_weight` is 0, the boost is skipped entirely. Non-conversation chunks are never affected.
+
+### 7.6 Corpus-Aware Behavior at Query Time
 
 The query interface is unified, but the system can **weight** results by corpus type depending on query characteristics:
 
@@ -724,8 +827,10 @@ from pathlib import Path
 
 def main():
     parser = argparse.ArgumentParser(description="Code Boundaries RAG Crawler")
-    parser.add_argument("--repo-path", type=Path, required=True,
-                        help="Path to the git repository root")
+    parser.add_argument("--repo-path", type=Path, action="append", required=True,
+                        help="Path to a git repository root (repeat for multi-repo)")
+    parser.add_argument("--repo-name", type=str, action="append", default=None,
+                        help="Name for each repo (defaults to directory name)")
     parser.add_argument("--slack-export", type=Path, default=None,
                         help="Path to Slack JSON export")
     parser.add_argument("--transcripts-dir", type=Path, default=None,
@@ -741,11 +846,12 @@ def main():
 
     pipeline = IngestPipeline(output_dir=args.output_dir)
 
-    # Phase 1: Crawl code and deploy files from repo
-    pipeline.crawl_repo(args.repo_path, incremental=args.incremental)
-
-    # Phase 2: Crawl documentation from repo
-    pipeline.crawl_docs(args.repo_path)
+    # Phase 1-2: Crawl code, deploy files, and docs from each repo
+    repo_names = args.repo_name or [None] * len(args.repo_path)
+    for repo_path, repo_name in zip(args.repo_path, repo_names):
+        name = repo_name or repo_path.name
+        pipeline.crawl_repo(repo_path, repo_name=name, incremental=args.incremental)
+        pipeline.crawl_docs(repo_path, repo_name=name)
 
     # Phase 3: Crawl external sources
     if args.slack_export:
@@ -779,9 +885,13 @@ Store the last-indexed commit hash in `data/manifest.json`:
 
 ```json
 {
-    "last_git_hash": "abc123def",
     "indexed_at": "2024-01-15T10:30:00Z",
     "chunk_count": 45230,
+    "repos": {
+        "auth-service": {"last_git_hash": "abc123def", "chunk_count": 12400},
+        "frontend": {"last_git_hash": "def456abc", "chunk_count": 8900},
+        "user-service": {"last_git_hash": "789fed012", "chunk_count": 10300}
+    },
     "corpus_counts": {
         "CODE_LOGIC": 32100,
         "CODE_DEPLOY": 890,
@@ -854,7 +964,7 @@ CMD ["--help"]
 **`requirements.txt`:**
 
 ```
-# Embedding
+# Embedding + Reranking
 sentence-transformers>=3.0
 torch>=2.0
 
@@ -886,12 +996,24 @@ networkx>=3.0
 # Build
 docker build -t code-rag-crawler .
 
-# Crawl a repo
+# Crawl a single repo
 docker run --rm \
     -v /path/to/your/repo:/repo:ro \
     -v ./data:/data \
     code-rag-crawler \
     --repo-path /repo \
+    --output-dir /data
+
+# Crawl multiple repos
+docker run --rm \
+    -v /path/to/auth-service:/repos/auth:ro \
+    -v /path/to/frontend:/repos/frontend:ro \
+    -v /path/to/user-service:/repos/users:ro \
+    -v ./data:/data \
+    code-rag-crawler \
+    --repo-path /repos/auth --repo-name auth-service \
+    --repo-path /repos/frontend --repo-name frontend \
+    --repo-path /repos/users --repo-name user-service \
     --output-dir /data
 
 # Crawl with Slack export
@@ -1023,32 +1145,41 @@ rag/
 
 ---
 
-## 13. Open Questions
+## 13. Resolved Decisions
 
-### Q1: Reranker
+| # | Question | Decision |
+|---|----------|----------|
+| Q1 | Reranker? | **Yes.** Cross-encoder reranker added to pipeline (Section 7.4). Start with `ms-marco-MiniLM-L-6-v2`, upgrade to `CodeRankLLM` if code-specific quality is needed. |
+| Q2 | Conversation freshness? | **Yes.** Exponential decay with configurable half-life, applied as optional post-rerank multiplier (Section 7.5). |
+| Q3 | Multi-repo? | **Yes.** `repo_name` field on all chunks, `--repo-path` accepts multiple values, per-repo git hash tracking in manifest, `repo_filter` on queries. |
+| Q5 | gRPC / Proto parsing? | **Not needed.** Stack is HTTP-only. No gRPC in the target codebase. |
 
-Should we add a cross-encoder reranker (e.g., CodeRankLLM) on top of RRF results? This would improve precision for the final top-K but adds latency and GPU requirements. **Recommendation:** Start without it. Add if retrieval quality is insufficient after evaluation.
+---
 
-### Q2: Conversation freshness weighting
+## 14. Open Questions
 
-Slack conversations have timestamps. Should more recent conversations rank higher? For incident-related queries, recency matters. For "how does X work" queries, it doesn't. **Recommendation:** Add optional `recency_boost` parameter to `QueryRequest` rather than always-on time decay.
+### Q1: Embedding model upgrade path
 
-### Q3: Multi-repo support
-
-The current design assumes a single repo. If the codebase spans multiple repos, we need:
-- Per-repo crawl runs that write to the same LanceDB
-- `repo` field added to chunk schema
-- Service graph that spans repos
-
-**Recommendation:** Add `repo_name` to chunk schema now (default to dirname of `--repo-path`). Multi-repo orchestration is a later concern.
-
-### Q4: Embedding model upgrade path
-
-CodeRankEmbed is the right starting point. If we later need higher quality (e.g., `jina-code-embeddings-1.5b` at 1.5B params), the switch requires:
+CodeRankEmbed (137M params, Dec 2024) is the right starting point. If we later need higher quality, the upgrade requires:
 - Re-embed all chunks (batch job)
 - Adjust vector dimension in LanceDB schema
 - No changes to BM25, graph, or query interface
 
-### Q5: Proto file parsing
+**Candidate upgrades:**
 
-For gRPC services, `.proto` files are the definitive service contract. Should we add a dedicated proto crawler that extracts service/method definitions? **Recommendation:** Yes, as a follow-up. Parse proto files with `grpcio-tools` or regex and create `CODE_LOGIC` chunks with `symbol_kind="rpc_method"`.
+| Model | Params | CoIR NDCG@10 | License | GPU Required | Notes |
+|-------|--------|-------------|---------|-------------|-------|
+| CodeRankEmbed (current) | 137M | 60.1 | Apache 2.0 | No | CPU-friendly baseline |
+| Qodo-Embed-1-1.5B | 1.5B | 68.5 | OpenRAIL++ | Yes (~6GB) | Best mid-tier option |
+| KaLM-Embedding-Gemma3-12B | 12.2B | Not published | Tencent community | Yes (~24GB) | MTEB #1, no CoIR scores yet |
+| Nomic Embed Code | 7B | SOTA (unreported) | Apache 2.0 | Yes (~14GB) | Successor to CodeRankEmbed |
+
+**On KaLM-Embedding specifically:** Currently #1 on MMTEB (general text retrieval score 75.66, overall mean 72.32). However, it has **no published CoIR/code-specific retrieval benchmarks**. It's a 12.2B model requiring ~24GB VRAM (BF16) or ~8-12GB (Q4 quantized). GGUF quantizations are available. Until CoIR scores are published, we cannot evaluate its code retrieval quality vs CodeRankEmbed. Worth re-evaluating once code benchmarks appear.
+
+### Q2: Reranker upgrade to code-specific model
+
+The initial cross-encoder (`ms-marco-MiniLM-L-6-v2`) is general-purpose. If code retrieval precision is insufficient, upgrade to `nomic-ai/CodeRankLLM` (7B, code-specific reranker). This requires GPU and increases rerank latency from ~500ms to ~10s for 50 candidates. Evaluate before upgrading.
+
+### Q3: OpenAPI / Swagger spec parsing
+
+For HTTP services, OpenAPI specs (if available) are the definitive service contract. A dedicated crawler could extract endpoint definitions, request/response schemas, and authentication requirements. **Recommendation:** Add as a follow-up if OpenAPI specs exist in the repos.
