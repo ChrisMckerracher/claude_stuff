@@ -1183,3 +1183,692 @@ The initial cross-encoder (`ms-marco-MiniLM-L-6-v2`) is general-purpose. If code
 ### Q3: OpenAPI / Swagger spec parsing
 
 For HTTP services, OpenAPI specs (if available) are the definitive service contract. A dedicated crawler could extract endpoint definitions, request/response schemas, and authentication requirements. **Recommendation:** Add as a follow-up if OpenAPI specs exist in the repos.
+
+---
+
+## 15. Typed Ingestion Pipeline Architecture
+
+### 15.1 Framework Evaluation
+
+We evaluated whether an existing data pipeline framework could simplify the ingestion system. The candidates:
+
+| Framework | Type | Fits? | Verdict |
+|-----------|------|-------|---------|
+| **Dagster** | Macro-orchestrator (asset-centric) | No | Platform with server/daemon/UI. We're a batch CLI, not a scheduled pipeline. Massive overhead for a one-shot crawl job. |
+| **Prefect** | Macro-orchestrator (task-centric) | No | Same problem as Dagster. Adds deployment infra we don't need. |
+| **Apache Airflow** | Macro-orchestrator (DAG scheduler) | No | Designed for recurring scheduled workflows. Our crawl is on-demand. |
+| **Apache Hamilton** | Micro-framework (function DAG) | Partial | Closest fit. Functions define DAG nodes, type annotations are mandatory, runs anywhere Python does. But its paradigm is "function name = output artifact" — designed for computing named dataframe columns, not processing N heterogeneous items through conditional pipelines. The per-item type routing we need doesn't map to a static function DAG. |
+| **Luigi** | Lightweight orchestrator (file targets) | No | Task = file-on-disk target. Good for ETL to data warehouse, wrong abstraction for in-memory chunk pipelines. |
+| **Bonobo** | Lightweight ETL | No | Abandoned (~2020). Graph-of-generators model is interesting but unmaintained. |
+| **Unstructured.io** | Document ingestion | No | Handles PDFs, HTML, Word docs. Doesn't do: tree-sitter parsing, code-aware chunking, service call detection, BM25 indexing. Our content is code, not office documents. |
+| **Bytewax** | Streaming (Rust engine) | No | Streaming-first. We're batch. |
+| **dlt (data load tool)** | Data loading | No | Designed for API→warehouse ETL. Wrong domain entirely. |
+
+**Decision: No framework.** The complexity in our pipeline is in the individual stages (tree-sitter chunking, code-aware tokenization, service call detection, PHI scrubbing). No framework helps with any of that. The orchestration between stages is a typed for-loop — adding a framework would wrap the simple part in abstractions while leaving the hard parts untouched.
+
+Instead, we use **Python's type system as the framework**: `Protocol`, `dataclass`, `Enum`, `Generic`. The type definitions themselves encode the pipeline invariants and make illegal states unrepresentable.
+
+### 15.2 Sensitivity Tiers (First-Class Types)
+
+Every data source has an inherent sensitivity level. This is a **property of the source type, not a runtime decision**. We encode it at the type level so the pipeline can enforce scrubbing rules statically.
+
+```python
+from enum import Enum
+
+class SensitivityTier(Enum):
+    """PHI/PII sensitivity classification for data sources.
+
+    Determines whether PHI scrubbing is applied during ingestion.
+    This is fixed per source type — not configurable at runtime.
+    """
+    CLEAN          = "clean"           # Cannot contain PHI by nature
+    SENSITIVE      = "sensitive"       # Known to contain PHI, must scrub
+    MAYBE_SENSITIVE = "maybe_sensitive" # Might contain PHI, scrub defensively
+```
+
+**Why three tiers, not two:**
+
+- `CLEAN` data (source code, YAML manifests) is structurally incapable of containing PHI. Running Presidio NER on Go source code wastes CPU and produces false positives (`func` flagged as a name). **Skip entirely.**
+- `SENSITIVE` data (Google Docs, meeting transcripts) is authored by humans discussing real people, patients, customers. **Always scrub, always audit.**
+- `MAYBE_SENSITIVE` data (Slack threads, runbooks) usually doesn't contain PHI but occasionally does ("@alice escalated to Dr. Smith about patient 12345"). **Scrub defensively, but lower audit priority.**
+
+The practical difference between `SENSITIVE` and `MAYBE_SENSITIVE` is in audit logging and alerting thresholds, not in whether scrubbing runs. Both tiers scrub. Only `CLEAN` skips.
+
+### 15.3 Source Type Registry
+
+Each source type bundles its corpus classification, sensitivity tier, and pipeline behavior into a single frozen definition. This is the **authoritative registry** — adding a new source type means adding one entry here, and the pipeline handles it.
+
+```python
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class SourceTypeDef:
+    """Immutable definition of a data source type.
+
+    This is the first-class citizen. Every chunk carries a reference
+    to its SourceTypeDef, which determines how it flows through the
+    pipeline (which crawler, whether scrubbing runs, audit level).
+    """
+    corpus_type: str              # e.g. "CODE_LOGIC", "CONVO_SLACK"
+    sensitivity: SensitivityTier  # fixed per type
+    description: str              # human-readable
+    chunker_kind: str             # "ast", "yaml", "markdown", "thread", "sliding"
+    bm25_tokenizer: str           # "code" or "nlp"
+
+
+# ─── THE REGISTRY ─────────────────────────────────────────────────
+#
+# This table IS the architecture. Adding a new data source means
+# adding one row. The pipeline reads this to route crawling,
+# scrubbing, chunking, and tokenization.
+
+SOURCE_TYPES: dict[str, SourceTypeDef] = {
+    # ── Code (CLEAN) ──────────────────────────────────────────────
+    "CODE_LOGIC": SourceTypeDef(
+        corpus_type="CODE_LOGIC",
+        sensitivity=SensitivityTier.CLEAN,
+        description="Source code: functions, classes, methods",
+        chunker_kind="ast",
+        bm25_tokenizer="code",
+    ),
+    "CODE_DEPLOY": SourceTypeDef(
+        corpus_type="CODE_DEPLOY",
+        sensitivity=SensitivityTier.CLEAN,
+        description="Kubernetes YAMLs, Dockerfiles, Helm charts",
+        chunker_kind="yaml",
+        bm25_tokenizer="code",
+    ),
+    "CODE_CONFIG": SourceTypeDef(
+        corpus_type="CODE_CONFIG",
+        sensitivity=SensitivityTier.CLEAN,
+        description="Config files: .env templates, go.mod, package.json",
+        chunker_kind="yaml",
+        bm25_tokenizer="code",
+    ),
+
+    # ── Documentation (CLEAN to MAYBE_SENSITIVE) ──────────────────
+    "DOC_README": SourceTypeDef(
+        corpus_type="DOC_README",
+        sensitivity=SensitivityTier.CLEAN,
+        description="In-repo markdown docs and READMEs",
+        chunker_kind="markdown",
+        bm25_tokenizer="nlp",
+    ),
+    "DOC_RUNBOOK": SourceTypeDef(
+        corpus_type="DOC_RUNBOOK",
+        sensitivity=SensitivityTier.MAYBE_SENSITIVE,
+        description="Operational runbooks (may reference people/incidents)",
+        chunker_kind="markdown",
+        bm25_tokenizer="nlp",
+    ),
+    "DOC_ADR": SourceTypeDef(
+        corpus_type="DOC_ADR",
+        sensitivity=SensitivityTier.MAYBE_SENSITIVE,
+        description="Architecture decision records",
+        chunker_kind="markdown",
+        bm25_tokenizer="nlp",
+    ),
+    "DOC_GOOGLE": SourceTypeDef(
+        corpus_type="DOC_GOOGLE",
+        sensitivity=SensitivityTier.SENSITIVE,
+        description="Google Docs exports (design docs, specs, meeting notes)",
+        chunker_kind="markdown",
+        bm25_tokenizer="nlp",
+    ),
+
+    # ── Conversations (MAYBE_SENSITIVE to SENSITIVE) ──────────────
+    "CONVO_SLACK": SourceTypeDef(
+        corpus_type="CONVO_SLACK",
+        sensitivity=SensitivityTier.MAYBE_SENSITIVE,
+        description="Slack threads (may mention people, incidents)",
+        chunker_kind="thread",
+        bm25_tokenizer="nlp",
+    ),
+    "CONVO_TRANSCRIPT": SourceTypeDef(
+        corpus_type="CONVO_TRANSCRIPT",
+        sensitivity=SensitivityTier.SENSITIVE,
+        description="Meeting transcripts, call recordings",
+        chunker_kind="thread",
+        bm25_tokenizer="nlp",
+    ),
+    "CONVO_OTHER": SourceTypeDef(
+        corpus_type="CONVO_OTHER",
+        sensitivity=SensitivityTier.MAYBE_SENSITIVE,
+        description="Other conversation-like content",
+        chunker_kind="sliding",
+        bm25_tokenizer="nlp",
+    ),
+}
+```
+
+**Sensitivity assignments explained:**
+
+| Source Type | Tier | Why |
+|-------------|------|-----|
+| `CODE_LOGIC` | CLEAN | Compilers wrote/enforce the structure. No PHI in AST nodes. |
+| `CODE_DEPLOY` | CLEAN | YAML manifests are infrastructure, not human-authored prose. |
+| `CODE_CONFIG` | CLEAN | Config templates. Actual secrets are in `.env` (which we exclude). |
+| `DOC_README` | CLEAN | Technical docs in-repo. Rarely contain real names/PHI. |
+| `DOC_RUNBOOK` | MAYBE | Runbooks sometimes reference on-call engineers by name. |
+| `DOC_ADR` | MAYBE | ADRs may list authors, decision-makers. |
+| `DOC_GOOGLE` | SENSITIVE | Human-authored docs freely discuss people, customers, incidents. |
+| `CONVO_SLACK` | MAYBE | Most is technical, but threads occasionally name individuals. |
+| `CONVO_TRANSCRIPT` | SENSITIVE | Meeting recordings always contain real names, voices, opinions. |
+| `CONVO_OTHER` | MAYBE | Unknown provenance — scrub to be safe. |
+
+### 15.4 Pipeline Stage Types (Enforced by the Type System)
+
+The pipeline processes chunks through a linear sequence of stages. Each stage has a distinct **output type**. The key invariant: **you cannot embed a `RawChunk`, only a `CleanChunk`**. This prevents accidentally indexing unscrubbed PHI.
+
+```python
+from dataclasses import dataclass, field
+
+# ─── STAGE OUTPUT TYPES ───────────────────────────────────────────
+#
+# RawChunk ──► CleanChunk ──► EmbeddedChunk ──► (indexed)
+#         scrub gate      embed           write to stores
+#
+# The type system enforces that scrubbing happens before embedding.
+# The Embedder accepts CleanChunk, not RawChunk. If you try to
+# skip scrubbing, mypy/pyright catches it.
+
+@dataclass
+class RawChunk:
+    """Output of a Crawler. May contain PHI. Cannot be embedded directly."""
+    id: str
+    source_uri: str
+    byte_range: tuple[int, int]
+    source_type: SourceTypeDef       # ◄── carries sensitivity tier
+    text: str
+    context_prefix: str
+    repo_name: str | None
+
+    # Type-specific metadata (all optional)
+    language: str | None = None
+    symbol_name: str | None = None
+    symbol_kind: str | None = None
+    signature: str | None = None
+    file_path: str | None = None
+    git_hash: str | None = None
+    section_path: str | None = None
+    author: str | None = None
+    timestamp: str | None = None
+    channel: str | None = None
+    thread_id: str | None = None
+    imports: list[str] = field(default_factory=list)
+    calls_out: list[str] = field(default_factory=list)
+    called_by: list[str] = field(default_factory=list)
+    service_name: str | None = None
+    k8s_labels: dict | None = None
+
+
+@dataclass
+class ScrubAuditEntry:
+    """Record of what PHI scrubbing found and replaced."""
+    chunk_id: str
+    tier: SensitivityTier
+    entities_found: int            # count of PHI entities detected
+    entity_types: list[str]        # e.g. ["PERSON", "EMAIL", "PHONE"]
+    secrets_found: int             # count of secrets detected
+    scrubbed: bool                 # True if text was modified
+
+
+@dataclass
+class CleanChunk:
+    """Output of the scrub gate. Guaranteed safe to embed and index.
+
+    For CLEAN sources, this is a zero-cost wrapper (text unchanged).
+    For SENSITIVE/MAYBE_SENSITIVE, text has been scrubbed.
+    """
+    id: str
+    source_uri: str
+    byte_range: tuple[int, int]
+    source_type: SourceTypeDef
+    text: str                        # ◄── scrubbed text (or original if CLEAN)
+    context_prefix: str
+    repo_name: str | None
+    audit: ScrubAuditEntry | None    # None for CLEAN tier
+
+    # All metadata fields carried forward from RawChunk
+    language: str | None = None
+    symbol_name: str | None = None
+    symbol_kind: str | None = None
+    signature: str | None = None
+    file_path: str | None = None
+    git_hash: str | None = None
+    section_path: str | None = None
+    author: str | None = None
+    timestamp: str | None = None
+    channel: str | None = None
+    thread_id: str | None = None
+    imports: list[str] = field(default_factory=list)
+    calls_out: list[str] = field(default_factory=list)
+    called_by: list[str] = field(default_factory=list)
+    service_name: str | None = None
+    k8s_labels: dict | None = None
+
+
+@dataclass
+class EmbeddedChunk:
+    """Output of the Embedder. Ready to write to LanceDB."""
+    chunk: CleanChunk                # ◄── must be CleanChunk, not RawChunk
+    vector: list[float]              # 768-dim CodeRankEmbed
+```
+
+### 15.5 Pipeline Interfaces (Protocols)
+
+Each pipeline stage is defined by a `Protocol` — a structural interface that any implementation must satisfy. No base classes, no inheritance. Just "does this object have the right methods with the right types?"
+
+```python
+from typing import Protocol, Iterator
+from pathlib import Path
+
+# ─── SOURCE INPUT ─────────────────────────────────────────────────
+
+@dataclass
+class CrawlSource:
+    """A single source to ingest. Provided via CLI args."""
+    source_kind: SourceKind        # what kind of input this is
+    path: Path                     # file or directory
+    repo_name: str | None = None   # for multi-repo support
+
+
+class SourceKind(Enum):
+    """What the CLI argument points to. One source kind may produce
+    multiple corpus types (e.g., a REPO produces CODE_LOGIC +
+    CODE_DEPLOY + CODE_CONFIG + DOC_README chunks)."""
+    REPO            = "repo"           # git repo root
+    SLACK_EXPORT    = "slack_export"   # Slack JSON file
+    TRANSCRIPT_DIR  = "transcript_dir" # directory of transcripts
+    RUNBOOK_DIR     = "runbook_dir"    # directory of runbooks
+    GOOGLE_DOCS_DIR = "gdocs_dir"     # directory of exported Google Docs
+
+
+# ─── CRAWLER PROTOCOL ─────────────────────────────────────────────
+
+class Crawler(Protocol):
+    """Discovers content in a source and yields typed RawChunks.
+
+    Each crawler handles one or more corpus types. A single CrawlSource
+    may be processed by multiple crawlers (e.g., a REPO is crawled by
+    CodeCrawler, DeployCrawler, ConfigCrawler, and DocsCrawler).
+    """
+    @property
+    def corpus_types(self) -> frozenset[str]:
+        """Which corpus_types this crawler produces."""
+        ...
+
+    def crawl(self, source: CrawlSource) -> Iterator[RawChunk]:
+        """Yield RawChunks from the source. Each chunk's source_type
+        is set by the crawler from the SOURCE_TYPES registry."""
+        ...
+
+
+# ─── SCRUBBER PROTOCOL ────────────────────────────────────────────
+
+class Scrubber(Protocol):
+    """Detects and removes PHI/PII from chunk text.
+    See PHI_SCRUBBING.md for full design."""
+
+    def scrub(self, chunk: RawChunk) -> CleanChunk:
+        """Analyze text, replace PHI entities, return CleanChunk
+        with audit trail."""
+        ...
+
+
+# ─── EMBEDDER PROTOCOL ────────────────────────────────────────────
+
+class Embedder(Protocol):
+    """Encodes CleanChunks into dense vectors."""
+
+    def embed_batch(self, chunks: list[CleanChunk]) -> list[EmbeddedChunk]:
+        """Batch-encode chunks. Prepends context_prefix to text
+        before encoding. Returns EmbeddedChunks with 768-dim vectors."""
+        ...
+
+
+# ─── INDEXER PROTOCOL ─────────────────────────────────────────────
+
+class Indexer(Protocol):
+    """Writes EmbeddedChunks to persistent stores."""
+
+    def index(self, chunks: list[EmbeddedChunk]) -> None:
+        """Write to LanceDB (vectors + metadata) and accumulate
+        for BM25 index build."""
+        ...
+
+    def finalize(self) -> None:
+        """Build BM25 index, write service graph, write manifest.
+        Called once after all chunks are indexed."""
+        ...
+```
+
+### 15.6 The Scrub Gate (Sensitivity-Aware Routing)
+
+This is the central control flow decision. The scrub gate reads the sensitivity tier from the chunk's `source_type` and routes accordingly. It is the **only place** in the pipeline where sensitivity matters.
+
+```python
+class ScrubGate:
+    """Routes chunks through PHI scrubbing based on sensitivity tier.
+
+    CLEAN          → pass through (zero-cost CleanChunk conversion)
+    SENSITIVE      → full scrub + audit log (WARN level)
+    MAYBE_SENSITIVE → full scrub + audit log (INFO level)
+
+    This is NOT a crawler or an indexer. It sits between them.
+    """
+
+    def __init__(self, scrubber: Scrubber):
+        self._scrubber = scrubber
+
+    def process(self, chunk: RawChunk) -> CleanChunk:
+        tier = chunk.source_type.sensitivity
+
+        if tier == SensitivityTier.CLEAN:
+            # Zero-cost pass-through. No scrubbing, no audit.
+            return self._promote_clean(chunk)
+
+        # SENSITIVE and MAYBE_SENSITIVE both scrub.
+        # The scrubber returns a CleanChunk with audit trail.
+        clean = self._scrubber.scrub(chunk)
+
+        # Log based on tier
+        if tier == SensitivityTier.SENSITIVE:
+            logger.warning(
+                "scrubbed_sensitive_chunk",
+                chunk_id=clean.id,
+                entities=clean.audit.entities_found if clean.audit else 0,
+            )
+        else:  # MAYBE_SENSITIVE
+            logger.info(
+                "scrubbed_maybe_sensitive_chunk",
+                chunk_id=clean.id,
+                entities=clean.audit.entities_found if clean.audit else 0,
+            )
+
+        return clean
+
+    @staticmethod
+    def _promote_clean(raw: RawChunk) -> CleanChunk:
+        """Convert RawChunk to CleanChunk without modification.
+        Only valid for CLEAN tier — enforced by the caller."""
+        return CleanChunk(
+            id=raw.id,
+            source_uri=raw.source_uri,
+            byte_range=raw.byte_range,
+            source_type=raw.source_type,
+            text=raw.text,              # unchanged
+            context_prefix=raw.context_prefix,
+            repo_name=raw.repo_name,
+            audit=None,                 # no scrub audit for CLEAN
+            language=raw.language,
+            symbol_name=raw.symbol_name,
+            symbol_kind=raw.symbol_kind,
+            signature=raw.signature,
+            file_path=raw.file_path,
+            git_hash=raw.git_hash,
+            section_path=raw.section_path,
+            author=raw.author,
+            timestamp=raw.timestamp,
+            channel=raw.channel,
+            thread_id=raw.thread_id,
+            imports=raw.imports,
+            calls_out=raw.calls_out,
+            called_by=raw.called_by,
+            service_name=raw.service_name,
+            k8s_labels=raw.k8s_labels,
+        )
+```
+
+### 15.7 Crawler Routing (SourceKind → Crawlers)
+
+A single CLI source (e.g., a git repo) fans out to multiple crawlers. The routing is a static map — no runtime dispatch needed.
+
+```python
+# Which crawlers run for each source kind.
+# Order matters: code first (populates service names for later crawlers).
+CRAWLER_ROUTING: dict[SourceKind, list[type[Crawler]]] = {
+    SourceKind.REPO: [
+        CodeCrawler,       # → CODE_LOGIC
+        DeployCrawler,     # → CODE_DEPLOY
+        ConfigCrawler,     # → CODE_CONFIG
+        DocsCrawler,       # → DOC_README, DOC_RUNBOOK, DOC_ADR
+    ],
+    SourceKind.SLACK_EXPORT: [
+        SlackCrawler,      # → CONVO_SLACK
+    ],
+    SourceKind.TRANSCRIPT_DIR: [
+        TranscriptCrawler, # → CONVO_TRANSCRIPT
+    ],
+    SourceKind.RUNBOOK_DIR: [
+        RunbookCrawler,    # → DOC_RUNBOOK
+    ],
+    SourceKind.GOOGLE_DOCS_DIR: [
+        GoogleDocsCrawler, # → DOC_GOOGLE
+    ],
+}
+```
+
+### 15.8 Pipeline Orchestrator (The Entire Control Flow)
+
+```python
+class IngestPipeline:
+    """Orchestrates the full ingestion pipeline.
+
+    This is intentionally simple. The complexity lives in the
+    individual crawlers and the scrubber — not in orchestration.
+    """
+
+    def __init__(
+        self,
+        output_dir: Path,
+        scrubber: Scrubber,
+        embedder: Embedder,
+        indexer: Indexer,
+        batch_size: int = 64,
+    ):
+        self._scrub_gate = ScrubGate(scrubber)
+        self._embedder = embedder
+        self._indexer = indexer
+        self._batch_size = batch_size
+        self._output_dir = output_dir
+        self._all_chunks: list[CleanChunk] = []
+
+    def ingest(self, sources: list[CrawlSource]) -> None:
+        """Run the full pipeline over all sources."""
+
+        # ── Phase 1: Crawl + Scrub ─────────────────────────────
+        for source in sources:
+            crawler_classes = CRAWLER_ROUTING[source.source_kind]
+            for crawler_cls in crawler_classes:
+                crawler = crawler_cls()
+                for raw_chunk in crawler.crawl(source):
+                    #
+                    # This is where sensitivity routing happens.
+                    # The scrub gate reads raw_chunk.source_type.sensitivity
+                    # and either passes through or scrubs.
+                    #
+                    clean_chunk = self._scrub_gate.process(raw_chunk)
+                    self._all_chunks.append(clean_chunk)
+
+        # ── Phase 2: Batch Embed ───────────────────────────────
+        for i in range(0, len(self._all_chunks), self._batch_size):
+            batch = self._all_chunks[i : i + self._batch_size]
+            embedded = self._embedder.embed_batch(batch)
+            self._indexer.index(embedded)
+
+        # ── Phase 3: Finalize ──────────────────────────────────
+        self._indexer.finalize()  # BM25 index, service graph, manifest
+```
+
+### 15.9 Control Flow Diagram
+
+```
+CLI ARGS
+────────
+--repo-path ./auth --repo-name auth-service
+--repo-path ./frontend --repo-name frontend
+--slack-export ./slack.json
+--gdocs-dir ./exported-docs
+        │
+        ▼
+┌──────────────────────────────────────────────────────────────┐
+│                    SOURCE RESOLUTION                          │
+│                                                               │
+│   CrawlSource(REPO, ./auth)                                  │
+│   CrawlSource(REPO, ./frontend)                               │
+│   CrawlSource(SLACK_EXPORT, ./slack.json)                     │
+│   CrawlSource(GOOGLE_DOCS_DIR, ./exported-docs)               │
+└──────────────────────────┬───────────────────────────────────┘
+                           │
+                           │  for each source
+                           ▼
+┌──────────────────────────────────────────────────────────────┐
+│                    CRAWLER ROUTING                             │
+│                                                               │
+│   REPO ──────────► CodeCrawler ──────► RawChunk(CODE_LOGIC)   │
+│                    DeployCrawler ────► RawChunk(CODE_DEPLOY)  │
+│                    ConfigCrawler ───► RawChunk(CODE_CONFIG)   │
+│                    DocsCrawler ──────► RawChunk(DOC_README)   │
+│                                                               │
+│   SLACK_EXPORT ──► SlackCrawler ────► RawChunk(CONVO_SLACK)  │
+│                                                               │
+│   GOOGLE_DOCS ──► GoogleDocsCrawler ► RawChunk(DOC_GOOGLE)   │
+└──────────────────────────┬───────────────────────────────────┘
+                           │
+                           │  for each RawChunk
+                           ▼
+┌──────────────────────────────────────────────────────────────┐
+│                      SCRUB GATE                               │
+│                                                               │
+│   Read chunk.source_type.sensitivity                          │
+│                                                               │
+│   ┌─────────────────────────────────────────────────────────┐ │
+│   │                                                          │ │
+│   │  CLEAN ──────────────────────────────► CleanChunk        │ │
+│   │  (CODE_LOGIC, CODE_DEPLOY,            (text unchanged,   │ │
+│   │   CODE_CONFIG, DOC_README)             audit=None)       │ │
+│   │                                                          │ │
+│   │  SENSITIVE ──► Presidio NER ────────► CleanChunk        │ │
+│   │  (DOC_GOOGLE,   + detect-secrets      (text scrubbed,    │ │
+│   │   CONVO_TRANSCRIPT)                    audit logged       │ │
+│   │                + AST-aware code scrub   at WARN level)   │ │
+│   │                                                          │ │
+│   │  MAYBE_SENSITIVE ► Presidio NER ────► CleanChunk        │ │
+│   │  (CONVO_SLACK,     + detect-secrets    (text scrubbed,   │ │
+│   │   DOC_RUNBOOK,     + AST-aware         audit logged      │ │
+│   │   DOC_ADR,                              at INFO level)   │ │
+│   │   CONVO_OTHER)                                           │ │
+│   └─────────────────────────────────────────────────────────┘ │
+└──────────────────────────┬───────────────────────────────────┘
+                           │
+                           │  CleanChunk (guaranteed safe)
+                           │  batches of 64
+                           ▼
+┌──────────────────────────────────────────────────────────────┐
+│                      EMBEDDER                                 │
+│                                                               │
+│   CodeRankEmbed(context_prefix + "\n" + text)                 │
+│   ──► 768-dim vector                                          │
+│   ──► EmbeddedChunk(chunk=CleanChunk, vector=[...])           │
+└──────────────────────────┬───────────────────────────────────┘
+                           │
+                           │  EmbeddedChunk
+                           ▼
+┌──────────────────────────────────────────────────────────────┐
+│                      INDEXER                                   │
+│                                                               │
+│   ┌───────────────┐  ┌──────────────┐  ┌──────────────────┐  │
+│   │   LanceDB     │  │  BM25 Index  │  │  Service Graph   │  │
+│   │               │  │              │  │                  │  │
+│   │  vectors +    │  │  tokenized   │  │  nodes + edges   │  │
+│   │  metadata     │  │  by chunk's  │  │  from calls_out  │  │
+│   │               │  │  bm25_       │  │  + k8s manifests │  │
+│   │  write per    │  │  tokenizer   │  │                  │  │
+│   │  batch        │  │  setting     │  │  built at        │  │
+│   │               │  │              │  │  finalize()      │  │
+│   └───────┬───────┘  └──────┬───────┘  └────────┬─────────┘  │
+│           │                 │                    │             │
+│           ▼                 ▼                    ▼             │
+│   ┌──────────────────────────────────────────────────────┐    │
+│   │                    data/ folder                       │    │
+│   │  rag.lance/  bm25_index/  service_graph.json         │    │
+│   │                           manifest.json              │    │
+│   └──────────────────────────────────────────────────────┘    │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### 15.10 Type Chain Summary
+
+The entire pipeline expressed as a type chain:
+
+```
+CrawlSource                        (CLI input)
+    │
+    │  CRAWLER_ROUTING[source.source_kind]
+    ▼
+RawChunk                           (may contain PHI)
+    │
+    │  ScrubGate.process()
+    │  reads chunk.source_type.sensitivity
+    │
+    │  CLEAN ─────────── promote (zero-cost) ──┐
+    │  SENSITIVE ──────── scrubber.scrub() ────►│
+    │  MAYBE_SENSITIVE ── scrubber.scrub() ────►│
+    │                                           │
+    ▼                                           │
+CleanChunk    ◄─────────────────────────────────┘
+    │            (guaranteed no PHI in text)
+    │            (carries ScrubAuditEntry or None)
+    │
+    │  embedder.embed_batch()
+    ▼
+EmbeddedChunk
+    │            (CleanChunk + 768-dim vector)
+    │
+    │  indexer.index()
+    ▼
+data/            (LanceDB + BM25 + service graph)
+```
+
+**Key type-safety guarantee:** The `Embedder` Protocol accepts `list[CleanChunk]`, not `list[RawChunk]`. If any code path tries to embed unscrubbed chunks, static type checkers (mypy, pyright) reject it. This makes "accidentally indexing PHI" a compile-time error, not a runtime bug.
+
+### 15.11 Adding a New Source Type (The Checklist)
+
+Adding a new data source (e.g., Confluence wiki pages) requires exactly these steps:
+
+1. **Add to `SOURCE_TYPES` registry:**
+   ```python
+   "DOC_CONFLUENCE": SourceTypeDef(
+       corpus_type="DOC_CONFLUENCE",
+       sensitivity=SensitivityTier.MAYBE_SENSITIVE,
+       description="Confluence wiki pages",
+       chunker_kind="markdown",   # HTML→markdown→heading split
+       bm25_tokenizer="nlp",
+   ),
+   ```
+
+2. **Add a `SourceKind`** (if the input format is new):
+   ```python
+   class SourceKind(Enum):
+       ...
+       CONFLUENCE_EXPORT = "confluence_export"
+   ```
+
+3. **Write a `Crawler`** that satisfies the `Crawler` Protocol:
+   ```python
+   class ConfluenceCrawler:
+       @property
+       def corpus_types(self) -> frozenset[str]:
+           return frozenset({"DOC_CONFLUENCE"})
+
+       def crawl(self, source: CrawlSource) -> Iterator[RawChunk]:
+           ...  # parse HTML, extract pages, yield RawChunks
+   ```
+
+4. **Register in `CRAWLER_ROUTING`:**
+   ```python
+   SourceKind.CONFLUENCE_EXPORT: [ConfluenceCrawler],
+   ```
+
+5. **Done.** The scrub gate, embedder, and indexer handle it automatically because `DOC_CONFLUENCE` carries `MAYBE_SENSITIVE` sensitivity and `"nlp"` tokenizer setting. No changes to any other pipeline stage.
