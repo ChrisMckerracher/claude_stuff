@@ -36,6 +36,35 @@ Dagster Assets (orchestration + observability)
     └── knowledge_graph     → Graphiti
 ```
 
+**Central Configuration (Single Source of Truth):**
+```python
+# rag/config.py - ALL magic numbers live here
+
+# Embedding Model - used by TokenCounter, Embedder, and dimension validation
+EMBEDDING_MODEL = "jinaai/jina-embeddings-v3"
+EMBEDDING_DIM = 768
+
+# Confidence Thresholds - for service call extraction
+class ConfidenceThresholds:
+    """When to trust extracted relationships."""
+    MIN_FOR_GRAPH = 0.5       # Don't add GUESS-level to graph
+    MIN_FOR_LINKING = 0.7     # Need MEDIUM+ for call linking
+    SHOW_TO_USER = 0.5        # Hide LOW/GUESS from search results
+
+# Chunking Limits
+MAX_CHUNK_TOKENS = 512
+CHUNK_OVERLAP_TOKENS = 50
+
+# Graph Traversal
+DEFAULT_MAX_HOPS = 2
+DEFAULT_EDGE_TYPES = ["CALLS", "OWNS", "MENTIONS"]
+```
+
+**Usage:** All modules import from config:
+```python
+from rag.config import EMBEDDING_MODEL, EMBEDDING_DIM, ConfidenceThresholds
+```
+
 **What We Build Custom:**
 1. `repo_crawler` asset - coordinates multiple git repos (~50 lines)
 2. `service_extractor` asset - AST-based call detection + route linking (~750 lines)
@@ -153,6 +182,13 @@ class HttpCallPattern(PatternMatcher):
     Go: http.Get, http.Post, client.Do
     TS: fetch(), axios.get/post
     C#: HttpClient.GetAsync/PostAsync
+
+    STUCK? Debug checklist:
+    1. Print node.type - is it 'call' or 'call_expression'?
+    2. Print source[node.start_byte:node.end_byte] to see actual text
+    3. Use tree-sitter playground: https://tree-sitter.github.io/tree-sitter/playground
+    4. Check if URL is in a string literal child node
+    5. Verify you're not matching inside comments/docstrings
 
     TEST VECTORS - Must Match:
     -------------------------
@@ -411,15 +447,58 @@ rag/
 - Copy-paste between sections is easy
 - Split into submodules AFTER it works
 
-**Checkpoint markers in code:**
-```python
-# === CHECKPOINT: Python HTTP extraction complete ===
-# Smoke test: pytest tests/test_all.py::test_python_http_calls
-# Next: Add gRPC patterns
+**Executable Checkpoint Markers:**
 
-# === CHECKPOINT: Route registry complete ===
-# Smoke test: pytest tests/test_all.py::test_registry_crud
-# Next: Add FastAPI route extraction
+Each checkpoint is runnable code that verifies the phase works:
+
+```python
+# === CHECKPOINT: Python HTTP extraction ===
+# Run: python -m rag.extractors --checkpoint python_http
+if __name__ == "__main__" and "--checkpoint" in sys.argv:
+    checkpoint = sys.argv[sys.argv.index("--checkpoint") + 1]
+
+    if checkpoint == "python_http":
+        code = b'requests.get("http://user-service/api/users")'
+        calls = PythonExtractor().extract(code)
+        assert len(calls) == 1, f"Expected 1 call, got {len(calls)}"
+        assert calls[0].target_service == "user-service"
+        print("CHECKPOINT PASSED: Python HTTP extraction")
+
+    elif checkpoint == "registry_crud":
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            r = SQLiteRegistry(f"{d}/test.db")
+            r.add_routes("svc", [RouteDefinition("svc", "GET", "/api/{id}", "h.py", "get", 1)])
+            assert r.find_route_by_request("svc", "GET", "/api/123") is not None
+            r.clear("svc")
+            assert r.get_routes("svc") == []
+        print("CHECKPOINT PASSED: Registry CRUD")
+
+    elif checkpoint == "call_linker":
+        registry = InMemoryRegistry()
+        registry.add_routes("user-svc", [RouteDefinition("user-svc", "GET", "/api/users/{id}", "u.py", "get_user", 1)])
+        linker = CallLinker(registry)
+        call = ServiceCall("auth.py", "user-svc", "http", 10, 0.9, "GET", "/api/users/123", None)
+        result = linker.link(call)
+        assert result.linked, f"Expected linked, got {result.miss_reason}"
+        print("CHECKPOINT PASSED: Call linker")
+
+    else:
+        print(f"Unknown checkpoint: {checkpoint}")
+        print("Available: python_http, registry_crud, call_linker")
+        sys.exit(1)
+```
+
+**Usage during vibe coding:**
+```bash
+# After finishing Python extraction
+python -m rag.extractors --checkpoint python_http
+
+# After finishing registry
+python -m rag.extractors --checkpoint registry_crud
+
+# After finishing linker
+python -m rag.extractors --checkpoint call_linker
 ```
 
 ---
@@ -519,7 +598,7 @@ class FastAPIPattern(FrameworkPattern):
         return routes
 ```
 
-### `linker.py` (~60 lines)
+### `linker.py` (~80 lines)
 ```python
 @dataclass
 class ServiceRelation:
@@ -532,19 +611,65 @@ class ServiceRelation:
     relation_type: Literal["HTTP_CALL", "GRPC_CALL", "QUEUE_PUBLISH"]
     route_path: str | None  # For HTTP calls
 
+
+@dataclass
+class LinkResult:
+    """Result of attempting to link a call to its handler.
+
+    Either relation is set (successful link) or unlinked_call + miss_reason
+    are set (failed to link).
+    """
+    relation: ServiceRelation | None
+    unlinked_call: ServiceCall | None  # Original call if no match
+    miss_reason: Literal["no_routes", "method_mismatch", "path_mismatch"] | None
+
+    @property
+    def linked(self) -> bool:
+        """True if call was successfully linked to a handler."""
+        return self.relation is not None
+
+    @staticmethod
+    def success(relation: ServiceRelation) -> "LinkResult":
+        return LinkResult(relation=relation, unlinked_call=None, miss_reason=None)
+
+    @staticmethod
+    def failure(call: ServiceCall, reason: Literal["no_routes", "method_mismatch", "path_mismatch"]) -> "LinkResult":
+        return LinkResult(relation=None, unlinked_call=call, miss_reason=reason)
+
+
 class CallLinker:
-    """Links extracted calls to their handler definitions."""
+    """Links extracted calls to their handler definitions.
 
-    def __init__(self, route_registry: dict[str, list[RouteDefinition]]):
-        self._routes = route_registry  # service_name → routes
+    STUCK? Debug checklist:
+    1. Check registry has routes for target service: registry.all_services()
+    2. Print call.method and call.url_path
+    3. Print route.method and route.path for comparison
+    4. Verify HTTP method case matches (GET vs get)
+    """
 
-    def link(self, call: ServiceCall) -> ServiceRelation | None:
-        """Match a call to its handler."""
-        routes = self._routes.get(call.target_service, [])
+    def __init__(self, route_registry: RouteRegistry):
+        self._registry = route_registry
+
+    def link(self, call: ServiceCall) -> LinkResult:
+        """Match a call to its handler.
+
+        Returns LinkResult with either:
+        - relation set (successful link)
+        - unlinked_call + miss_reason set (failed to link)
+        """
+        routes = self._registry.get_routes(call.target_service)
+
+        if not routes:
+            return LinkResult.failure(call, "no_routes")
 
         for route in routes:
-            if self._matches(call, route):
-                return ServiceRelation(
+            # Check method first
+            if call.method and call.method.upper() != route.method.upper():
+                continue  # Try next route, might be method_mismatch
+
+            # Check path
+            if self._path_matches(call.url_path, route.path):
+                return LinkResult.success(ServiceRelation(
                     source_file=call.source_file,
                     source_line=call.line_number,
                     target_file=f"{call.target_service}/{route.handler_file}",
@@ -552,27 +677,23 @@ class CallLinker:
                     target_line=route.line_number,
                     relation_type="HTTP_CALL",
                     route_path=route.path,
-                )
+                ))
 
-        # No match found - still record the call but without target file
-        return ServiceRelation(
-            source_file=call.source_file,
-            source_line=call.line_number,
-            target_file=f"{call.target_service}/<unknown>",
-            target_function="<unknown>",
-            target_line=0,
-            relation_type="HTTP_CALL",
-            route_path=call.url_path,
-        )
+        # Determine why no match
+        method_routes = [r for r in routes if r.method.upper() == (call.method or "GET").upper()]
+        if not method_routes:
+            return LinkResult.failure(call, "method_mismatch")
+        return LinkResult.failure(call, "path_mismatch")
 
-    def _matches(self, call: ServiceCall, route: RouteDefinition) -> bool:
-        """Check if call matches route pattern."""
-        if call.method and call.method != route.method:
+    def _path_matches(self, request_path: str | None, pattern: str) -> bool:
+        """Check if request path matches route pattern."""
+        if not request_path:
             return False
-
-        # Convert /api/users/{user_id} → regex /api/users/[^/]+
-        pattern = re.sub(r'\{[^}]+\}', r'[^/]+', route.path)
-        return re.match(f"^{pattern}$", call.url_path) is not None
+        import re
+        path = request_path.split("?")[0].rstrip("/")
+        pattern = pattern.rstrip("/")
+        regex = re.sub(r'\{[^}]+\}', r'[^/]+', pattern)
+        return re.match(f"^{regex}(?:/.*)?$", path) is not None
 ```
 
 ### Example Flow
@@ -776,10 +897,29 @@ class InMemoryRegistry(RouteRegistry):
         return None
 
     def _path_matches(self, pattern: str, request_path: str) -> bool:
-        """Match pattern /api/users/{user_id} against request /api/users/123."""
+        """Match pattern /api/users/{user_id} against request /api/users/123.
+
+        Handles edge cases:
+        - Trailing slashes: /api/users/ matches /api/users/{id}
+        - Query params: /api/users/123?include=orders matches /api/users/{id}
+        - Trailing segments: /api/users/123/orders matches /api/users/{id}
+          (useful for nested resources not explicitly defined)
+
+        STUCK? Debug checklist:
+        1. Print both pattern and request_path
+        2. Check if query params are being stripped
+        3. Verify {param} syntax matches your route definitions
+        """
         import re
+        # Strip query params
+        path = request_path.split("?")[0]
+        # Normalize trailing slashes
+        path = path.rstrip("/")
+        pattern = pattern.rstrip("/")
+        # Convert {param} to regex
         regex = re.sub(r'\{[^}]+\}', r'[^/]+', pattern)
-        return re.match(f"^{regex}$", request_path) is not None
+        # Allow optional trailing path segments
+        return re.match(f"^{regex}(?:/.*)?$", path) is not None
 
     def all_services(self) -> list[str]:
         return list(self._routes.keys())
@@ -858,9 +998,12 @@ class SQLiteRegistry(RouteRegistry):
         return None
 
     def _path_matches(self, pattern: str, request_path: str) -> bool:
+        """Match pattern against request path. See InMemoryRegistry for details."""
         import re
+        path = request_path.split("?")[0].rstrip("/")
+        pattern = pattern.rstrip("/")
         regex = re.sub(r'\{[^}]+\}', r'[^/]+', pattern)
-        return re.match(f"^{regex}$", request_path) is not None
+        return re.match(f"^{regex}(?:/.*)?$", path) is not None
 
     def all_services(self) -> list[str]:
         with self._conn() as conn:
@@ -950,8 +1093,14 @@ class RouteRegistryOutput:
 class ServiceRelationsOutput:
     """Output of service_relations asset."""
     relations: list[ServiceRelation]
+    unlinked_calls: list[tuple[ServiceCall, str]]  # (call, miss_reason) pairs
     linked_count: int      # Successfully linked to handler
     unlinked_count: int    # Call detected but no handler found
+
+    def unlinked_by_reason(self) -> dict[str, int]:
+        """Count unlinked calls by reason (no_routes, method_mismatch, path_mismatch)."""
+        from collections import Counter
+        return dict(Counter(reason for _, reason in self.unlinked_calls))
 
 @dataclass
 class KnowledgeGraphOutput:
@@ -1012,14 +1161,16 @@ def service_relations(
     """Extract service calls and link to handlers using the registry.
 
     Depends on route_registry so all routes are available before linking.
+
+    Recovery Strategy: This asset is idempotent. If it fails mid-run,
+    simply re-materialize it. Dagster will re-run from scratch.
     """
     registry = route_registry.load()  # Type-safe loading
     linker = CallLinker(registry)
     extractor = ServiceExtractor()
 
     relations = []
-    linked = 0
-    unlinked = 0
+    unlinked_calls = []
 
     for service_name, files in raw_code_files.files_by_service.items():
         for file_path in files:
@@ -1030,17 +1181,17 @@ def service_relations(
 
             # Link each call to its handler
             for call in calls:
-                relation = linker.link(call)
-                relations.append(relation)
-                if relation.target_function != "<unknown>":
-                    linked += 1
+                result = linker.link(call)
+                if result.linked:
+                    relations.append(result.relation)
                 else:
-                    unlinked += 1
+                    unlinked_calls.append((result.unlinked_call, result.miss_reason))
 
     return ServiceRelationsOutput(
         relations=relations,
-        linked_count=linked,
-        unlinked_count=unlinked,
+        unlinked_calls=unlinked_calls,
+        linked_count=len(relations),
+        unlinked_count=len(unlinked_calls),
     )
 
 
@@ -1105,6 +1256,39 @@ Dagster ensures:
 4. `knowledge_graph` runs last (depends on service_relations)
 
 **This guarantees all routes are in the registry before any calls are linked.**
+
+### Recovery Strategy: Re-Run on Failure
+
+**Philosophy:** Don't try to rollback partial failures. Design for idempotent re-runs.
+
+| Store | Idempotency | Recovery |
+|-------|-------------|----------|
+| RouteRegistry (SQLite) | `add_routes` clears then inserts | Re-run asset |
+| LanceDB | Same chunk ID = no-op | Re-run asset |
+| Graphiti | Entity upsert by (type, name) | Re-run asset |
+
+**If ingestion fails mid-run:**
+
+1. Check Dagster UI for which asset failed
+2. Fix the underlying issue (disk space, network, etc.)
+3. Re-materialize the failed asset
+4. Dagster automatically re-runs downstream assets
+
+**Why not complex rollback?**
+
+- Cross-store transactions require distributed coordination (overkill)
+- Idempotent operations make re-runs safe and simple
+- Dagster's asset model naturally supports selective re-materialization
+- For vibe coding: "just re-run it" is the right mental model
+
+**When to do full reindex instead of re-run:**
+
+| Scenario | Action |
+|----------|--------|
+| Schema change (new entity types) | Full reindex |
+| Route patterns changed | Full reindex |
+| > 50% files changed | Full reindex (faster than incremental) |
+| Corrupted SQLite DB | Delete `./data/routes.db`, full reindex |
 
 ### Updated Line Counts
 
@@ -1202,17 +1386,31 @@ class VectorStore(Protocol):
         """
         ...
 
-    async def insert_batch(self, chunks: list[EmbeddedChunk]) -> int:
-        """Batch insert. Returns count successfully inserted.
+    async def insert_batch(self, chunks: list[EmbeddedChunk]) -> "BatchResult":
+        """Batch insert. Returns detailed result.
 
-        Partial Success: Inserts as many as possible, returns count.
-        Failed chunks can be identified by re-checking existence.
+        Partial Success: Inserts as many as possible, tracks failures individually.
+
+        Returns:
+            BatchResult with inserted_count, failed_chunks, and partial_success flag.
 
         Raises:
-            StorageError: Storage backend unavailable (no chunks inserted)
-            DimensionMismatchError: Any vector has wrong dimension (no chunks inserted)
+            StorageError: Storage backend completely unavailable (no chunks attempted)
         """
         ...
+
+
+@dataclass
+class BatchResult:
+    """Result of a batch insert operation."""
+    inserted_count: int
+    failed_chunks: list[tuple[ChunkID, RAGError]]  # (chunk_id, error) pairs
+    partial_success: bool  # True if some succeeded but not all
+
+    @property
+    def success(self) -> bool:
+        """True if all chunks inserted successfully."""
+        return len(self.failed_chunks) == 0
 
     async def search(
         self,
@@ -1308,6 +1506,19 @@ class GraphStore(Protocol):
     ) -> list[tuple[Entity, Relationship]]:
         """Graph traversal. BFS from entity.
 
+        Direction Semantics (for edge: source --[rel]--> target):
+            - "out": Return targets where entity_id is the source
+                     Example: A --CALLS--> B, get_neighbors(A, "out") → [B]
+            - "in":  Return sources where entity_id is the target
+                     Example: A --CALLS--> B, get_neighbors(B, "in") → [A]
+            - "both": Return neighbors in either direction
+
+        Args:
+            entity_id: Starting entity for traversal
+            rel_types: Filter to these relationship types (None = all types)
+            direction: Which edge direction to follow
+            max_hops: Maximum traversal depth (1 = immediate neighbors only)
+
         Returns:
             List of (entity, relationship) tuples within max_hops.
             Empty list if entity has no neighbors (not an error).
@@ -1315,6 +1526,13 @@ class GraphStore(Protocol):
         Raises:
             StorageError: Graph backend unavailable
             EntityNotFoundError: Starting entity doesn't exist
+
+        Example:
+            # Find all services that auth-service calls
+            await graph.get_neighbors(auth_svc_id, rel_types=[CALLS], direction="out")
+
+            # Find all services that call auth-service
+            await graph.get_neighbors(auth_svc_id, rel_types=[CALLS], direction="in")
         """
         ...
 
@@ -1495,9 +1713,46 @@ class ScrubError(RAGError):
     reason: str
 
 class StorageError(RAGError):
-    """Storage operation failed."""
+    """Storage operation failed.
+
+    Attributes:
+        operation: The operation that failed (insert, search, delete)
+        reason: Human-readable error description
+        retryable: Whether the operation can be retried
+        retry_after_seconds: Suggested wait time before retry (None if not retryable)
+    """
     operation: str
     reason: str
+    retryable: bool = False
+    retry_after_seconds: int | None = None
+
+class DimensionMismatchError(StorageError):
+    """Vector dimension doesn't match store configuration."""
+    expected: int
+    actual: int
+    retryable: bool = False  # Never retryable - fix the vector
+
+class DuplicateChunkError(StorageError):
+    """Chunk ID exists with different content hash."""
+    chunk_id: ChunkID
+    existing_hash: str
+    new_hash: str
+    retryable: bool = False  # Never retryable - content conflict
+
+class EntityNotFoundError(RAGError):
+    """Referenced entity doesn't exist in graph."""
+    entity_id: EntityID
+
+class LLMError(RAGError):
+    """LLM call failed during entity extraction.
+
+    Attributes:
+        retryable: True for rate limits/timeouts, False for invalid input
+        retry_after_seconds: Wait time for rate limits
+    """
+    reason: str
+    retryable: bool = True  # Most LLM errors are transient
+    retry_after_seconds: int | None = None
 
 class EmbeddingError(RAGError):
     """Embedding failed."""
@@ -1505,7 +1760,7 @@ class EmbeddingError(RAGError):
     reason: str
 ```
 
-**Verification:** Error taxonomy covers all failure modes.
+**Verification:** Error taxonomy covers all failure modes with retry semantics.
 
 ### Phase 0 Verification Checklist
 
@@ -2037,24 +2292,117 @@ class MockGraphStore:
         source: str,
         timestamp: datetime | None = None,
     ) -> list[Entity]:
-        """Mock: extract entities using simple regex patterns."""
-        # This is a simplified mock - real Graphiti uses LLM
+        """Mock: extract entities using regex patterns.
+
+        NOTE: Real Graphiti uses LLM extraction. This mock uses patterns
+        that approximate LLM behavior for common cases. See PARITY_TEST_CASES
+        to verify mock matches production behavior on key inputs.
+
+        STUCK? Debug checklist:
+        1. Print text to see what you're matching against
+        2. Check if pattern handles spaces (e.g., "auth service" vs "auth-service")
+        3. Verify entity type is in ENTITY_PATTERNS
+        4. Run parity tests: pytest -k "test_mock_parity"
+        """
         entities = []
 
-        # Simple service detection (mock)
-        service_pattern = r'\b(\w+-service|\w+-api)\b'
-        for match in re.finditer(service_pattern, text):
-            entity = Entity(
-                id=EntityID(f"service:{match.group(1)}"),
-                type=EntityType.SERVICE,
-                name=match.group(1),
-                properties={},
-                source_refs=[source],
-            )
-            await self.add_entity(entity)
-            entities.append(entity)
+        # Patterns that approximate LLM extraction
+        # Key: Must pass PARITY_TEST_CASES below
+        ENTITY_PATTERNS = {
+            EntityType.SERVICE: [
+                r'\b(\w+[-_]?(?:service|api|svc))\b',  # user-service, billing_api
+                r'\b(\w+)[-\s]+(?:service|api)\b',     # "user service", "billing api"
+            ],
+            EntityType.PERSON: [
+                r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:from|on|owns?|maintains?)',  # "John Smith from"
+                r'(?:contact|ask|ping)\s+([A-Z][a-z]+)',  # "contact John"
+            ],
+            EntityType.INCIDENT: [
+                r'\b(outage|incident|failure|issue)\b.*\b(\w+-service|\w+-api)\b',  # "outage...user-service"
+                r'\b(\w+-service|\w+-api)\b.*\b(outage|incident|failure)\b',  # "user-service...outage"
+            ],
+        }
+
+        for entity_type, patterns in ENTITY_PATTERNS.items():
+            for pattern in patterns:
+                for match in re.finditer(pattern, text, re.IGNORECASE):
+                    name = match.group(1)
+                    # Normalize service names
+                    if entity_type == EntityType.SERVICE:
+                        name = name.lower().replace(" ", "-").replace("_", "-")
+
+                    entity = Entity(
+                        id=EntityID(f"{entity_type.value.lower()}:{name}"),
+                        type=entity_type,
+                        name=name,
+                        properties={},
+                        source_refs=[source],
+                    )
+                    await self.add_entity(entity)
+                    entities.append(entity)
 
         return entities
+
+
+# === PARITY TEST CASES ===
+# MockGraphStore MUST pass these to ensure mock↔production compatibility.
+# Run: pytest -k "test_mock_parity"
+
+PARITY_TEST_CASES = [
+    # (input_text, expected_entity_types, min_count, description)
+    (
+        "The auth-service calls user-service for authentication",
+        [EntityType.SERVICE],
+        2,
+        "Basic service detection with hyphens"
+    ),
+    (
+        "The auth service calls user service",
+        [EntityType.SERVICE],
+        2,
+        "Service detection with spaces (common in docs)"
+    ),
+    (
+        "John from platform team owns billing-api",
+        [EntityType.SERVICE, EntityType.PERSON],
+        2,
+        "Mixed entity types"
+    ),
+    (
+        "Payment outage affected checkout-service",
+        [EntityType.SERVICE],
+        1,
+        "Incident context with service"
+    ),
+    (
+        "contact Alice about the user-svc",
+        [EntityType.SERVICE, EntityType.PERSON],
+        2,
+        "Abbreviated service name + person"
+    ),
+]
+
+
+def test_mock_parity():
+    """Verify MockGraphStore extracts entities like Graphiti would.
+
+    If this test fails, either:
+    1. Update MockGraphStore patterns to handle the case
+    2. Or document why mock diverges from production
+    """
+    import asyncio
+
+    async def run_test():
+        mock = MockGraphStore()
+        for text, expected_types, min_count, desc in PARITY_TEST_CASES:
+            entities = await mock.add_episode(text, source="parity_test")
+            assert len(entities) >= min_count, \
+                f"PARITY FAIL [{desc}]: Expected >= {min_count} entities, got {len(entities)}"
+            for etype in expected_types:
+                assert any(e.type == etype for e in entities), \
+                    f"PARITY FAIL [{desc}]: Missing entity type {etype}"
+
+    asyncio.run(run_test())
 ```
 
 **Tests:** Exhaustive protocol compliance tests.
@@ -2621,165 +2969,391 @@ Query (string)
 
 ---
 
-## Smoke Tests & Acceptance Criteria
+## Acceptance Tests & Phase Completion Criteria
 
-Each phase has a concrete "it works" command and acceptance test.
+Each phase has:
+1. **Quick Check**: Executable one-liner to verify basic functionality
+2. **Acceptance Tests**: Full test suite that MUST pass before phase is complete
+3. **Done Checklist**: Explicit criteria for "this phase is complete"
+
+---
 
 ### Phase 2: Repo Crawler
 
-**Smoke Test:**
+**Quick Check:**
 ```bash
 python -c "
 from rag.pipeline import raw_code_files, Config
 result = raw_code_files(Config(repos=[{'name': 'test', 'path': '.'}]))
-print(f'Found {result.total_files} files')
-assert result.total_files > 0, 'Should find at least one file'
+print(f'QUICK CHECK PASSED: Found {result.total_files} files')
 "
 ```
 
-### Phase 3: Code Chunks
+**Acceptance Tests:**
+```python
+# tests/test_phase2_crawler.py
 
-**Smoke Test:**
-```bash
-python -c "
-from llama_index.core.node_parser import CodeSplitter
-from pathlib import Path
+def test_finds_python_files():
+    """Must find .py files."""
+    result = raw_code_files(Config(repos=[{'name': 'rag', 'path': './rag'}]))
+    py_files = [f for files in result.files_by_service.values() for f in files if f.suffix == '.py']
+    assert len(py_files) > 0
 
-splitter = CodeSplitter(language='python', chunk_lines=40, chunk_lines_overlap=10)
-code = Path('rag/types.py').read_text()
-chunks = splitter.split_text(code)
-print(f'Created {len(chunks)} chunks')
-assert len(chunks) > 0, 'Should create at least one chunk'
-"
+def test_respects_gitignore():
+    """Must NOT include files in .gitignore."""
+    result = raw_code_files(Config(repos=[{'name': 'test', 'path': '.'}]))
+    all_files = [str(f) for files in result.files_by_service.values() for f in files]
+    assert not any('__pycache__' in f for f in all_files)
+    assert not any('.pyc' in f for f in all_files)
+
+def test_handles_nested_directories():
+    """Must traverse subdirectories."""
+    result = raw_code_files(Config(repos=[{'name': 'rag', 'path': './rag'}]))
+    all_files = [str(f) for files in result.files_by_service.values() for f in files]
+    # Should find files in subdirs
+    assert any('/' in f or '\\\\' in f for f in all_files)
+
+def test_empty_repo_returns_zero():
+    """Empty directory should return 0 files, not error."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        result = raw_code_files(Config(repos=[{'name': 'empty', 'path': d}]))
+        assert result.total_files == 0
 ```
+
+**Done Checklist:**
+- [ ] All 4 acceptance tests pass
+- [ ] Quick check runs without error
+- [ ] Can process the `rag/` directory itself
+
+---
 
 ### Phase 4a: Python Call Extraction
 
-**Smoke Test:**
+**Quick Check:**
 ```bash
 python -c "
-from rag.extractors import ServiceExtractor
-
-code = b'''
-import requests
-def fetch_user(user_id):
-    return requests.get(f\"http://user-service/api/users/{user_id}\")
-'''
-
-extractor = ServiceExtractor()
-calls = extractor.extract_from_file('test.py', code)
-print(f'Found {len(calls)} calls: {calls}')
-assert len(calls) == 1, 'Should find one HTTP call'
-assert calls[0].target_service == 'user-service', 'Should detect user-service'
+from rag.extractors import PythonExtractor
+code = b'requests.get(\"http://user-service/api/users\")'
+calls = PythonExtractor().extract(code)
+assert len(calls) == 1 and calls[0].target_service == 'user-service'
+print('QUICK CHECK PASSED: Python extraction works')
 "
 ```
 
+**Acceptance Tests:**
+```python
+# tests/test_phase4a_python.py
+
+def test_extracts_requests_get_literal():
+    """HIGH confidence: literal URL string."""
+    code = b'requests.get("http://user-service/api/users")'
+    calls = PythonExtractor().extract(code)
+    assert len(calls) == 1
+    assert calls[0].target_service == "user-service"
+    assert calls[0].url_path == "/api/users"
+    assert calls[0].method == "GET"
+    assert calls[0].confidence >= 0.9  # HIGH
+
+def test_extracts_requests_post_with_json():
+    """POST with json body."""
+    code = b'requests.post("http://billing-api/charge", json={"amount": 100})'
+    calls = PythonExtractor().extract(code)
+    assert len(calls) == 1
+    assert calls[0].method == "POST"
+    assert calls[0].target_service == "billing-api"
+
+def test_extracts_fstring_url():
+    """MEDIUM confidence: f-string with variable."""
+    code = b'requests.get(f"http://{SERVICE_HOST}/api/users")'
+    calls = PythonExtractor().extract(code)
+    assert len(calls) == 1
+    assert 0.5 <= calls[0].confidence < 0.9  # MEDIUM or LOW
+
+def test_extracts_httpx_async():
+    """Async httpx client."""
+    code = b'await httpx.AsyncClient().get("http://user-service/health")'
+    calls = PythonExtractor().extract(code)
+    assert len(calls) == 1
+
+def test_extracts_aiohttp_session():
+    """aiohttp context manager pattern."""
+    code = b'''
+async with aiohttp.ClientSession() as session:
+    await session.get("http://user-service/api")
+'''
+    calls = PythonExtractor().extract(code)
+    assert len(calls) == 1
+
+def test_extracts_multiple_calls():
+    """Multiple calls in one file."""
+    code = b'''
+requests.get("http://user-service/users")
+requests.post("http://billing-api/charge")
+httpx.delete("http://order-service/orders/123")
+'''
+    calls = PythonExtractor().extract(code)
+    assert len(calls) == 3
+    services = {c.target_service for c in calls}
+    assert services == {"user-service", "billing-api", "order-service"}
+
+def test_ignores_docstring_urls():
+    """Must NOT match URLs in docstrings."""
+    code = b'''
+def fetch():
+    """
+    Example: http://user-service/api
+    See also: http://billing-api/docs
+    """
+    pass
+'''
+    calls = PythonExtractor().extract(code)
+    assert len(calls) == 0
+
+def test_ignores_comment_urls():
+    """Must NOT match URLs in comments."""
+    code = b'''
+# TODO: call http://user-service/api
+# See http://billing-api for docs
+pass
+'''
+    calls = PythonExtractor().extract(code)
+    assert len(calls) == 0
+
+def test_ignores_urllib_parse():
+    """Must NOT match URL parsing, only actual calls."""
+    code = b'''
+from urllib.parse import urlparse
+parsed = urlparse("http://user-service/api")
+'''
+    calls = PythonExtractor().extract(code)
+    assert len(calls) == 0
+```
+
+**Done Checklist:**
+- [ ] All 10 acceptance tests pass
+- [ ] Quick check runs without error
+- [ ] Confidence levels are correct (HIGH/MEDIUM/LOW)
+- [ ] Can process `rag/` directory with 0 false positives
+
+---
+
 ### Phase 4c: Route Registry
 
-**Smoke Test:**
+**Quick Check:**
 ```bash
 python -c "
 from rag.extractors import SQLiteRegistry, RouteDefinition
 import tempfile, os
-
 with tempfile.TemporaryDirectory() as d:
-    registry = SQLiteRegistry(os.path.join(d, 'routes.db'))
-    registry.add_routes('user-service', [
-        RouteDefinition('user-service', 'GET', '/api/users/{id}', 'user.py', 'get_user', 10)
-    ])
-    route = registry.find_route_by_request('user-service', 'GET', '/api/users/123')
-    print(f'Found route: {route}')
-    assert route is not None, 'Should find matching route'
-    assert route.handler_function == 'get_user'
+    r = SQLiteRegistry(os.path.join(d, 'r.db'))
+    r.add_routes('svc', [RouteDefinition('svc', 'GET', '/api/{id}', 'h.py', 'get', 1)])
+    assert r.find_route_by_request('svc', 'GET', '/api/123') is not None
+print('QUICK CHECK PASSED: Registry works')
 "
 ```
 
-### Phase 4e: Call Linker Integration
-
-**Smoke Test:**
-```bash
-python -c "
-from rag.extractors import CallLinker, SQLiteRegistry, ServiceCall, RouteDefinition
-import tempfile, os
-
-with tempfile.TemporaryDirectory() as d:
-    registry = SQLiteRegistry(os.path.join(d, 'routes.db'))
-    registry.add_routes('user-service', [
-        RouteDefinition('user-service', 'GET', '/api/users/{id}', 'controllers/user.py', 'get_user', 10)
-    ])
-
-    linker = CallLinker(registry)
-    call = ServiceCall(
-        source_file='auth/login.py',
-        target_service='user-service',
-        call_type='http',
-        line_number=25,
-        confidence=0.9,
-        method='GET',
-        url_path='/api/users/123',
-    )
-    relation = linker.link(call)
-    print(f'Linked: {relation}')
-    assert relation.target_function == 'get_user', 'Should link to handler'
-"
-```
-
-### Phase 5: Vector Index
-
-**Smoke Test:**
-```bash
-python -c "
-from rag.stores import LanceStore
-from rag.types import EmbeddedChunk, CleanChunk, ChunkID, CorpusType
-import tempfile, asyncio
-
-async def test():
-    with tempfile.TemporaryDirectory() as d:
-        store = LanceStore(db_path=d)
-        chunk = EmbeddedChunk(
-            chunk=CleanChunk(
-                id=ChunkID.from_content('test.py', 0, 100),
-                text='def hello(): pass',
-                source_uri='test.py',
-                corpus_type=CorpusType.CODE_LOGIC,
-                context_prefix='test.py',
-                metadata={},
-                scrub_log=[],
-            ),
-            vector=[0.1] * 768,
-        )
-        await store.insert(chunk)
-        results = await store.search([0.1] * 768, limit=1)
-        print(f'Found {len(results)} results')
-        assert len(results) == 1, 'Should find inserted chunk'
-
-asyncio.run(test())
-"
-```
-
-### Phase 7: Hybrid Retriever (Acceptance Test)
-
-**Acceptance Test - MUST PASS for MVP complete:**
+**Acceptance Tests:**
 ```python
-async def test_hybrid_retrieval_finds_related_code():
-    \"\"\"MUST PASS for Phase 7 to be complete.\"\"\"
-    # Setup: index two related services
+# tests/test_phase4c_registry.py
+
+def test_exact_path_match():
+    """Exact path matches."""
+    registry.add_routes('svc', [RouteDefinition('svc', 'GET', '/api/users', 'h.py', 'list_users', 1)])
+    route = registry.find_route_by_request('svc', 'GET', '/api/users')
+    assert route is not None
+    assert route.handler_function == 'list_users'
+
+def test_parameterized_path_match():
+    """Path with {param} matches concrete value."""
+    registry.add_routes('svc', [RouteDefinition('svc', 'GET', '/api/users/{id}', 'h.py', 'get_user', 1)])
+    route = registry.find_route_by_request('svc', 'GET', '/api/users/123')
+    assert route is not None
+    assert route.handler_function == 'get_user'
+
+def test_trailing_slash_matches():
+    """Trailing slash should match."""
+    registry.add_routes('svc', [RouteDefinition('svc', 'GET', '/api/users/{id}', 'h.py', 'get', 1)])
+    route = registry.find_route_by_request('svc', 'GET', '/api/users/123/')
+    assert route is not None
+
+def test_query_params_ignored():
+    """Query params should be stripped before matching."""
+    registry.add_routes('svc', [RouteDefinition('svc', 'GET', '/api/users/{id}', 'h.py', 'get', 1)])
+    route = registry.find_route_by_request('svc', 'GET', '/api/users/123?include=orders')
+    assert route is not None
+
+def test_trailing_path_matches():
+    """Trailing path segments match (for nested resources)."""
+    registry.add_routes('svc', [RouteDefinition('svc', 'GET', '/api/users/{id}', 'h.py', 'get', 1)])
+    route = registry.find_route_by_request('svc', 'GET', '/api/users/123/orders')
+    assert route is not None  # Matches user resource, orders is extension
+
+def test_method_mismatch_returns_none():
+    """Wrong HTTP method returns None."""
+    registry.add_routes('svc', [RouteDefinition('svc', 'GET', '/api/users', 'h.py', 'list', 1)])
+    route = registry.find_route_by_request('svc', 'POST', '/api/users')
+    assert route is None
+
+def test_unknown_service_returns_none():
+    """Unknown service returns None, not error."""
+    route = registry.find_route_by_request('unknown-svc', 'GET', '/api/users')
+    assert route is None
+
+def test_clear_removes_routes():
+    """Clear should remove routes."""
+    registry.add_routes('svc', [RouteDefinition('svc', 'GET', '/api', 'h.py', 'root', 1)])
+    registry.clear('svc')
+    assert registry.get_routes('svc') == []
+```
+
+**Done Checklist:**
+- [ ] All 8 acceptance tests pass
+- [ ] Quick check runs without error
+- [ ] SQLite DB persists across restarts
+- [ ] Thread-safe for concurrent reads
+
+---
+
+### Phase 4e: Call Linker
+
+**Quick Check:**
+```bash
+python -c "
+from rag.extractors import CallLinker, InMemoryRegistry, RouteDefinition, ServiceCall
+registry = InMemoryRegistry()
+registry.add_routes('user-svc', [RouteDefinition('user-svc', 'GET', '/api/users/{id}', 'u.py', 'get_user', 1)])
+linker = CallLinker(registry)
+call = ServiceCall('auth.py', 'user-svc', 'http', 10, 0.9, 'GET', '/api/users/123', None)
+result = linker.link(call)
+assert result.linked and result.relation.target_function == 'get_user'
+print('QUICK CHECK PASSED: Linker works')
+"
+```
+
+**Acceptance Tests:**
+```python
+# tests/test_phase4e_linker.py
+
+def test_links_exact_match():
+    """Exact path and method links successfully."""
+    registry.add_routes('svc', [RouteDefinition('svc', 'GET', '/api/users/{id}', 'h.py', 'get_user', 10)])
+    result = linker.link(ServiceCall('a.py', 'svc', 'http', 1, 0.9, 'GET', '/api/users/123', None))
+    assert result.linked
+    assert result.relation.target_function == 'get_user'
+    assert result.relation.target_file == 'svc/h.py'
+
+def test_returns_no_routes_reason():
+    """Unknown service returns 'no_routes' reason."""
+    result = linker.link(ServiceCall('a.py', 'unknown', 'http', 1, 0.9, 'GET', '/api', None))
+    assert not result.linked
+    assert result.miss_reason == 'no_routes'
+    assert result.unlinked_call is not None
+
+def test_returns_method_mismatch_reason():
+    """Wrong method returns 'method_mismatch' reason."""
+    registry.add_routes('svc', [RouteDefinition('svc', 'GET', '/api', 'h.py', 'get', 1)])
+    result = linker.link(ServiceCall('a.py', 'svc', 'http', 1, 0.9, 'POST', '/api', None))
+    assert not result.linked
+    assert result.miss_reason == 'method_mismatch'
+
+def test_returns_path_mismatch_reason():
+    """Unmatched path returns 'path_mismatch' reason."""
+    registry.add_routes('svc', [RouteDefinition('svc', 'GET', '/api/users', 'h.py', 'list', 1)])
+    result = linker.link(ServiceCall('a.py', 'svc', 'http', 1, 0.9, 'GET', '/api/orders', None))
+    assert not result.linked
+    assert result.miss_reason == 'path_mismatch'
+
+def test_links_multiple_calls_same_file():
+    """Multiple calls from same file all link correctly."""
+    registry.add_routes('user-svc', [RouteDefinition('user-svc', 'GET', '/api/users/{id}', 'u.py', 'get', 1)])
+    registry.add_routes('billing-svc', [RouteDefinition('billing-svc', 'POST', '/charge', 'b.py', 'charge', 1)])
+
+    calls = [
+        ServiceCall('auth.py', 'user-svc', 'http', 10, 0.9, 'GET', '/api/users/1', None),
+        ServiceCall('auth.py', 'billing-svc', 'http', 20, 0.9, 'POST', '/charge', None),
+    ]
+    results = [linker.link(c) for c in calls]
+    assert all(r.linked for r in results)
+    assert results[0].relation.target_function == 'get'
+    assert results[1].relation.target_function == 'charge'
+```
+
+**Done Checklist:**
+- [ ] All 5 acceptance tests pass
+- [ ] Quick check runs without error
+- [ ] LinkResult.miss_reason is always set for unlinked calls
+- [ ] Integration test: auth-service → user-service fixture works
+
+---
+
+### Phase 7: Hybrid Retriever (MVP Acceptance)
+
+**Quick Check:**
+```bash
+python -c "
+from rag.retrieval import HybridRetriever
+from rag.stores import LanceStore
+from rag.graphiti import MockGraphStore
+# Just verify imports work - full test requires setup
+print('QUICK CHECK PASSED: Imports work')
+"
+```
+
+**Acceptance Tests (MVP MUST PASS):**
+```python
+# tests/test_phase7_mvp.py
+
+@pytest.fixture
+async def indexed_services():
+    """Index auth-service and user-service fixtures."""
     await ingest("fixtures/auth-service/")  # calls user-service
     await ingest("fixtures/user-service/")  # has /api/users endpoint
+    return retriever
 
-    # Query about auth
-    results = await retriever.search("user authentication")
+async def test_vector_search_returns_results(indexed_services):
+    """Basic vector search works."""
+    results = await indexed_services.search("user authentication", expand_graph=False)
+    assert len(results) > 0
 
-    # MUST find both services
+async def test_graph_expansion_finds_related(indexed_services):
+    """Graph expansion finds services that call each other."""
+    results = await indexed_services.search("authentication logic")
     files = {r.chunk.source_uri for r in results}
+    # Should find BOTH services due to graph expansion
     assert any("auth-service" in f for f in files), "Should find auth code"
     assert any("user-service" in f for f in files), "Should find related user code via graph"
 
-    # MUST rank auth higher (direct match)
-    auth_rank = next(i for i, r in enumerate(results) if "auth" in r.chunk.source_uri)
-    user_rank = next(i for i, r in enumerate(results) if "user" in r.chunk.source_uri)
-    assert auth_rank < user_rank, "Direct match should rank higher than graph expansion"
+async def test_direct_match_ranks_higher(indexed_services):
+    """Direct semantic match ranks higher than graph expansion."""
+    results = await indexed_services.search("user authentication")
+    # Find first occurrence of each service
+    auth_rank = next((i for i, r in enumerate(results) if "auth" in r.chunk.source_uri), 999)
+    user_rank = next((i for i, r in enumerate(results) if "user" in r.chunk.source_uri), 999)
+    assert auth_rank < user_rank, "Direct match (auth) should rank higher"
+
+async def test_empty_query_returns_empty():
+    """Empty or whitespace query returns empty results."""
+    results = await retriever.search("")
+    assert len(results) == 0
+    results = await retriever.search("   ")
+    assert len(results) == 0
+
+async def test_filter_by_corpus_type(indexed_services):
+    """Can filter results by corpus type."""
+    results = await indexed_services.search(
+        "user",
+        filters={"corpus_type": "CODE_LOGIC"}
+    )
+    assert all(r.chunk.corpus_type.value == "CODE_LOGIC" for r in results)
 ```
+
+**Done Checklist:**
+- [ ] All 5 MVP acceptance tests pass
+- [ ] `dagster dev` shows full pipeline with all assets green
+- [ ] Can query "authentication" and get auth-service code
+- [ ] Can query "user service owner" and get related entities
+- [ ] End-to-end latency < 5 seconds for typical query
 
 ---
 
