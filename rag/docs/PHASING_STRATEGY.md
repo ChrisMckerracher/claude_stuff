@@ -46,10 +46,22 @@ EMBEDDING_DIM = 768
 
 # Confidence Thresholds - for service call extraction
 class ConfidenceThresholds:
-    """When to trust extracted relationships."""
-    MIN_FOR_GRAPH = 0.5       # Don't add GUESS-level to graph
-    MIN_FOR_LINKING = 0.7     # Need MEDIUM+ for call linking
-    SHOW_TO_USER = 0.5        # Hide LOW/GUESS from search results
+    """When to trust extracted relationships.
+
+    IMPORTANT: All comparisons use >= (greater than or equal).
+
+    Examples:
+        MIN_FOR_GRAPH = 0.5 means confidence >= 0.5
+        → Includes: HIGH (0.9), MEDIUM (0.7), LOW (0.5)
+        → Excludes: GUESS (0.3)
+
+        MIN_FOR_LINKING = 0.7 means confidence >= 0.7
+        → Includes: HIGH (0.9), MEDIUM (0.7)
+        → Excludes: LOW (0.5), GUESS (0.3)
+    """
+    MIN_FOR_GRAPH = 0.5       # >= LOW (excludes GUESS)
+    MIN_FOR_LINKING = 0.7     # >= MEDIUM (excludes LOW, GUESS)
+    SHOW_TO_USER = 0.5        # >= LOW (excludes GUESS)
 
 # Chunking Limits
 MAX_CHUNK_TOKENS = 512
@@ -58,6 +70,37 @@ CHUNK_OVERLAP_TOKENS = 50
 # Graph Traversal
 DEFAULT_MAX_HOPS = 2
 DEFAULT_EDGE_TYPES = ["CALLS", "OWNS", "MENTIONS"]
+
+# Retry Policy - for storage operations with retryable errors
+class RetryPolicy:
+    """Retry policy for transient failures.
+
+    Usage:
+        for attempt in range(RetryPolicy.MAX_RETRIES):
+            try:
+                result = await store.insert(chunk)
+                break
+            except StorageError as e:
+                should_retry, delay = RetryPolicy.should_retry(attempt, e)
+                if not should_retry:
+                    raise
+                await asyncio.sleep(delay)
+    """
+    MAX_RETRIES = 3
+    BASE_DELAY_SECONDS = 1.0
+    BACKOFF_MULTIPLIER = 2.0
+    MAX_DELAY_SECONDS = 30.0
+
+    @staticmethod
+    def should_retry(attempt: int, error: "StorageError") -> tuple[bool, float]:
+        """Returns (should_retry, delay_seconds)."""
+        if not error.retryable or attempt >= RetryPolicy.MAX_RETRIES:
+            return (False, 0.0)
+        delay = min(
+            RetryPolicy.BASE_DELAY_SECONDS * (RetryPolicy.BACKOFF_MULTIPLIER ** attempt),
+            RetryPolicy.MAX_DELAY_SECONDS
+        )
+        return (True, delay)
 ```
 
 **Usage:** All modules import from config:
@@ -239,6 +282,18 @@ class HttpCallPattern(PatternMatcher):
         Output:
             List of ServiceCall objects. Empty if node isn't an HTTP call.
 
+        EDGE CASE TABLE:
+        | Input | Output | Why |
+        |-------|--------|-----|
+        | URL is empty string "" | [] | No service to extract |
+        | URL has no http:// prefix | [] | Could be file path, not HTTP |
+        | URL is f-string with variable | [ServiceCall] conf=MEDIUM | Partial info available |
+        | URL is pure variable `get(url)` | [ServiceCall] conf=LOW | Method known, target unknown |
+        | Multiple URLs in one call | [first URL only] | Rare; first is usually target |
+        | URL in docstring/comment | [] | Not actual call |
+        | URL is localhost/127.0.0.1 | [] | Local, not inter-service |
+        | node.type not call expression | [] | Bail early |
+
         Algorithm:
             1. Check node.type is a call expression (bail early if not)
             2. Get call text via source[node.start_byte:node.end_byte]
@@ -247,11 +302,6 @@ class HttpCallPattern(PatternMatcher):
             5. Extract path from URL
             6. Determine confidence: HIGH if literal URL, MEDIUM if f-string, LOW if variable
             7. Infer HTTP method from function name (get/post/put/delete/patch)
-
-        Edge Cases:
-            - Returns [] if URL is in docstring/comment (check parent node types)
-            - Returns [] if URL has no http:// prefix
-            - For f-strings, extract what we can, mark confidence MEDIUM
         """
 
 class GrpcCallPattern(PatternMatcher):
@@ -288,6 +338,15 @@ class GrpcCallPattern(PatternMatcher):
 
         Output:
             List of ServiceCall with call_type="grpc". Empty if not gRPC.
+
+        EDGE CASE TABLE:
+        | Input | Output | Why |
+        |-------|--------|-----|
+        | grpc.insecure_channel("svc:50051") | [ServiceCall target="svc"] | Strip port |
+        | grpc.insecure_channel(ADDR) | [ServiceCall] conf=LOW | Variable address |
+        | grpc.StatusCode.OK | [] | Enum, not call |
+        | stub.GetUser(request) | [] for MVP | Requires channel tracking |
+        | localhost:50051 | [] | Local, skip |
 
         Algorithm:
             1. Check if call is grpc.insecure_channel() or grpc.Dial()
@@ -334,6 +393,15 @@ class QueuePublishPattern(PatternMatcher):
         Output:
             List of ServiceCall with call_type="queue_publish". Empty if not publish.
 
+        EDGE CASE TABLE:
+        | Input | Output | Why |
+        |-------|--------|-----|
+        | basic_publish(routing_key='events') | [ServiceCall target="events"] | RabbitMQ |
+        | producer.send('topic', msg) | [ServiceCall target="topic"] | Kafka |
+        | queue_declare(queue='events') | [] | Declaration, not publish |
+        | publish(exchange='', routing_key=VAR) | [ServiceCall] conf=LOW | Variable topic |
+        | channel.publish to empty string | [] | Default exchange, unclear target |
+
         Algorithm:
             1. Check if call matches publish patterns:
                - Python: basic_publish, producer.send, publish
@@ -369,6 +437,15 @@ class QueueSubscribePattern(PatternMatcher):
         Output:
             List of ServiceCall with call_type="queue_subscribe".
             May return multiple calls for multi-topic subscribes.
+
+        EDGE CASE TABLE:
+        | Input | Output | Why |
+        |-------|--------|-----|
+        | basic_consume(queue='events') | [ServiceCall target="events"] | Single topic |
+        | subscribe(['a', 'b', 'c']) | [ServiceCall x 3] | One per topic |
+        | subscribe(TOPICS_VAR) | [ServiceCall] conf=LOW | Variable topics |
+        | queue_declare(queue='events') | [] | Declaration, not subscribe |
+        | subscribe([]) | [] | Empty list, nothing to track |
 
         Algorithm:
             1. Check if call matches subscribe patterns:
@@ -903,11 +980,22 @@ class RouteRegistry(Protocol):
         Returns:
             Matching RouteDefinition or None if no match.
 
-        Matching Rules:
-            - /api/users/123 matches pattern /api/users/{user_id}
-            - /api/orders/456/items matches pattern /api/orders/{id}/items
-            - Exact matches take priority over parameterized matches
-            - Method must match exactly (case-insensitive)
+        COLLISION PRIORITY (when multiple routes match):
+            1. Exact path match wins over parameterized
+               /api/users/me > /api/users/{id}
+            2. More specific pattern wins (more literal segments)
+               /api/users/{id}/orders > /api/users/{id}
+            3. First registered wins if still tied
+               (deterministic based on file scan order)
+
+        EDGE CASE TABLE:
+        | Request | Routes | Winner | Why |
+        |---------|--------|--------|-----|
+        | GET /api/users/me | /api/users/me, /api/users/{id} | /api/users/me | Exact > param |
+        | GET /api/users/123 | /api/users/{id} | /api/users/{id} | Only match |
+        | GET /api/users/123/orders | /api/users/{id}, /api/users/{id}/orders | /api/users/{id}/orders | More specific |
+        | POST /api/users | GET /api/users, POST /api/users | POST /api/users | Method match |
+        | GET /unknown | (none) | None | No match |
 
         Examples:
             find_route_by_request("user-service", "GET", "/api/users/123")
@@ -1154,6 +1242,21 @@ class RouteRegistryOutput:
         if not Path(self.db_path).exists():
             raise FileNotFoundError(f"Route registry not found: {self.db_path}")
         return SQLiteRegistry(self.db_path)
+
+@dataclass
+class CodeChunksOutput:
+    """Output of code_chunks asset."""
+    chunks_by_service: dict[str, list[RawChunk]]
+    total_chunks: int
+    files_with_no_chunks: list[str]  # Files that failed to parse or had no code
+    avg_chunk_tokens: float
+
+@dataclass
+class VectorIndexOutput:
+    """Output of vector_index asset."""
+    db_path: str
+    chunks_indexed: int
+    dimension: int  # Should match EMBEDDING_DIM (768)
 
 @dataclass
 class ServiceRelationsOutput:
@@ -2431,6 +2534,36 @@ class MockGraphStore:
 # MockGraphStore MUST pass these to ensure mock↔production compatibility.
 # Run: pytest -k "test_mock_parity"
 
+# KNOWN PARITY GAPS - Mock differs from Graphiti LLM extraction
+# Document these so you don't chase phantom bugs
+KNOWN_PARITY_GAPS = [
+    # (input_text, mock_behavior, graphiti_behavior, action)
+    (
+        "the auth thing is broken",
+        "No extraction (no 'service' suffix)",
+        "May extract 'auth' as Service entity",
+        "Accept gap - rare case, mock is stricter"
+    ),
+    (
+        "John deployed auth-service yesterday",
+        "Extracts: Person(John), Service(auth-service)",
+        "Extracts: Person, Service, DEPLOYED relationship",
+        "Accept gap - mock doesn't extract verbs as relationships"
+    ),
+    (
+        "the payment system went down",
+        "Extracts: Service(payment-system) via 'system' keyword",
+        "May or may not extract depending on LLM context",
+        "Accept gap - 'system' is ambiguous"
+    ),
+    (
+        "Alice and Bob discussed the outage",
+        "Extracts: Person(Alice), Person(Bob)",
+        "May extract DISCUSSED relationship between people",
+        "Accept gap - mock doesn't extract conversation relationships"
+    ),
+]
+
 PARITY_TEST_CASES = [
     # (input_text, expected_entity_types, min_count, description)
     (
@@ -3443,6 +3576,91 @@ async def test_filter_by_corpus_type(indexed_services):
 - [ ] Can query "authentication" and get auth-service code
 - [ ] Can query "user service owner" and get related entities
 - [ ] End-to-end latency < 5 seconds for typical query
+
+---
+
+## Test Fixture Structure
+
+The acceptance tests reference fixtures. Here's exactly what they contain:
+
+```
+fixtures/
+├── auth-service/
+│   ├── pyproject.toml
+│   └── src/
+│       └── auth/
+│           ├── __init__.py
+│           └── login.py
+└── user-service/
+    ├── pyproject.toml
+    └── src/
+        └── controllers/
+            ├── __init__.py
+            └── user_controller.py
+```
+
+### fixtures/auth-service/src/auth/login.py
+```python
+"""Authentication service - login handler."""
+import httpx
+
+async def authenticate_user(username: str, password: str) -> dict:
+    """Authenticate user by calling user-service."""
+    # This is the call we want to detect and link
+    response = await httpx.AsyncClient().get(
+        f"http://user-service/api/users/{username}"
+    )
+    user = response.json()
+
+    if user and verify_password(password, user["password_hash"]):
+        return {"token": create_token(user["id"])}
+    raise AuthenticationError("Invalid credentials")
+
+def verify_password(plain: str, hashed: str) -> bool:
+    """Verify password hash."""
+    return hash_password(plain) == hashed
+```
+
+### fixtures/user-service/src/controllers/user_controller.py
+```python
+"""User service - user CRUD operations."""
+from fastapi import APIRouter
+
+router = APIRouter()
+
+@router.get("/api/users/{user_id}")
+async def get_user(user_id: str) -> dict:
+    """Get user by ID. This is the handler we want to link to."""
+    user = await db.users.find_one({"id": user_id})
+    if not user:
+        raise HTTPException(404, "User not found")
+    return user
+
+@router.post("/api/users")
+async def create_user(user: UserCreate) -> dict:
+    """Create new user."""
+    return await db.users.insert_one(user.dict())
+
+@router.get("/api/users/me")
+async def get_current_user() -> dict:
+    """Get current authenticated user. Tests exact match priority."""
+    return await get_user(get_current_user_id())
+```
+
+### Expected Extraction Results
+
+| File | Extracted |
+|------|-----------|
+| `auth-service/src/auth/login.py` | `ServiceCall(target="user-service", method="GET", path="/api/users/{username}")` |
+| `user-service/src/controllers/user_controller.py` | 3 `RouteDefinition` objects |
+
+### Expected Linking Result
+
+```
+auth-service/src/auth/login.py:8
+    → HTTP_CALL →
+user-service/src/controllers/user_controller.py:get_user:9
+```
 
 ---
 
