@@ -1,29 +1,23 @@
-# Task 1.3: Markdown Chunker
+"""Markdown chunking at heading boundaries.
 
-**Status:** [ ] Not Started  |  [ ] In Progress  |  [x] Complete
+Splits markdown documents at heading boundaries while preserving
+document structure and keeping code blocks intact.
+"""
 
-## Objective
-
-Create a chunker that splits markdown at heading boundaries, preserving document structure.
-
-## File
-
-`rag/chunking/md_chunker.py`
-
-## Implementation
-
-```python
 import re
-from typing import Iterator
 from dataclasses import dataclass
-from rag.core.types import RawChunk, ChunkID, CorpusType
-from rag.core.protocols import Chunker
-from rag.chunking.token_counter import TokenCounter
+from typing import Iterator
+
 from rag.config import MAX_CHUNK_TOKENS
+from rag.core.types import ChunkID, CorpusType, RawChunk
+
+from .token_counter import TokenCounter
+
 
 @dataclass
 class Section:
     """A markdown section with heading and content."""
+
     heading: str
     level: int
     content: str
@@ -38,7 +32,7 @@ class MarkdownChunker:
     Keeps code blocks intact when possible.
     """
 
-    HEADING_PATTERN = re.compile(r'^(#{1,6})\s+(.+)$', re.MULTILINE)
+    HEADING_PATTERN = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
 
     def __init__(
         self,
@@ -77,31 +71,34 @@ class MarkdownChunker:
     def _split_by_headings(self, text: str) -> list[Section]:
         """Split markdown into sections by headings."""
         sections = []
-        current_pos = 0
 
         matches = list(self.HEADING_PATTERN.finditer(text))
 
         if not matches:
             # No headings - treat entire doc as one section
-            return [Section(
-                heading="",
-                level=0,
-                content=text,
-                start_byte=0,
-                end_byte=len(text.encode()),
-            )]
+            return [
+                Section(
+                    heading="",
+                    level=0,
+                    content=text,
+                    start_byte=0,
+                    end_byte=len(text.encode()),
+                )
+            ]
 
         # Content before first heading
         if matches[0].start() > 0:
-            preamble = text[:matches[0].start()].strip()
+            preamble = text[: matches[0].start()].strip()
             if preamble:
-                sections.append(Section(
-                    heading="(preamble)",
-                    level=0,
-                    content=preamble,
-                    start_byte=0,
-                    end_byte=len(preamble.encode()),
-                ))
+                sections.append(
+                    Section(
+                        heading="(preamble)",
+                        level=0,
+                        content=preamble,
+                        start_byte=0,
+                        end_byte=len(preamble.encode()),
+                    )
+                )
 
         # Process each heading section
         for i, match in enumerate(matches):
@@ -114,14 +111,16 @@ class MarkdownChunker:
             else:
                 end = len(text)
 
-            content = text[match.start():end].strip()
-            sections.append(Section(
-                heading=heading,
-                level=level,
-                content=content,
-                start_byte=len(text[:match.start()].encode()),
-                end_byte=len(text[:end].encode()),
-            ))
+            content = text[match.start() : end].strip()
+            sections.append(
+                Section(
+                    heading=heading,
+                    level=level,
+                    content=content,
+                    start_byte=len(text[: match.start()].encode()),
+                    end_byte=len(text[:end].encode()),
+                )
+            )
 
         return sections
 
@@ -152,52 +151,60 @@ class MarkdownChunker:
     ) -> Iterator[RawChunk]:
         """Split large section, preserving code blocks."""
         # Try to split at paragraph boundaries first
-        paragraphs = re.split(r'\n\n+', section.content)
+        paragraphs = re.split(r"\n\n+", section.content)
 
-        current_chunk = []
+        current_chunk: list[str] = []
         current_tokens = 0
         chunk_start = section.start_byte
+
+        # Determine corpus type once
+        if "README" in uri.upper():
+            corpus_type = CorpusType.DOC_README
+        else:
+            corpus_type = CorpusType.DOC_DESIGN
 
         for para in paragraphs:
             para_tokens = self._counter.count(para)
 
-            # Check if this paragraph is a code block
-            is_code_block = para.strip().startswith('```')
-
+            # Check if adding this paragraph would exceed limit
             if current_tokens + para_tokens > self._max and current_chunk:
                 # Yield current chunk
-                chunk_text = '\n\n'.join(current_chunk)
+                chunk_text = "\n\n".join(current_chunk)
+                chunk_end = chunk_start + len(chunk_text.encode())
                 yield RawChunk(
-                    id=ChunkID.from_content(uri, chunk_start, chunk_start + len(chunk_text.encode())),
+                    id=ChunkID.from_content(uri, chunk_start, chunk_end),
                     text=chunk_text,
                     source_uri=uri,
-                    corpus_type=CorpusType.DOC_DESIGN,
-                    byte_range=(chunk_start, chunk_start + len(chunk_text.encode())),
+                    corpus_type=corpus_type,
+                    byte_range=(chunk_start, chunk_end),
                     metadata={
                         "heading": section.heading,
                         "heading_level": section.level,
                         "is_partial": True,
                     },
                 )
-                chunk_start += len(chunk_text.encode()) + 2  # +2 for \n\n
+                chunk_start = chunk_end + 2  # +2 for \n\n
                 current_chunk = []
                 current_tokens = 0
 
-            # If code block is too large, split it
-            if is_code_block and para_tokens > self._max:
-                yield from self._split_code_block(para, uri, chunk_start, section)
+            # If single paragraph is too large, split by lines
+            if para_tokens > self._max:
+                yield from self._split_large_paragraph(
+                    para, uri, chunk_start, section, corpus_type
+                )
+                chunk_start += len(para.encode()) + 2
             else:
                 current_chunk.append(para)
                 current_tokens += para_tokens
 
         # Yield final chunk
         if current_chunk:
-            chunk_text = '\n\n'.join(current_chunk)
+            chunk_text = "\n\n".join(current_chunk)
             yield RawChunk(
                 id=ChunkID.from_content(uri, chunk_start, section.end_byte),
                 text=chunk_text,
                 source_uri=uri,
-                corpus_type=CorpusType.DOC_DESIGN,
+                corpus_type=corpus_type,
                 byte_range=(chunk_start, section.end_byte),
                 metadata={
                     "heading": section.heading,
@@ -205,32 +212,57 @@ class MarkdownChunker:
                 },
             )
 
-    def _split_code_block(
+    def _split_large_paragraph(
         self,
-        code_block: str,
+        para: str,
         uri: str,
         start_byte: int,
         section: Section,
+        corpus_type: CorpusType,
     ) -> Iterator[RawChunk]:
-        """Split a large code block by lines."""
-        lines = code_block.split('\n')
-        # ... similar line-based splitting logic ...
-```
+        """Split a large paragraph by lines."""
+        lines = para.split("\n")
+        current_chunk: list[str] = []
+        current_tokens = 0
+        chunk_start = start_byte
 
-## Acceptance Criteria
+        for line in lines:
+            line_tokens = self._counter.count(line)
 
-- [ ] Implements Chunker protocol
-- [ ] Splits at heading boundaries
-- [ ] Preserves code blocks when possible
-- [ ] Handles documents without headings
-- [ ] Splits large sections at paragraph boundaries
-- [ ] No chunk exceeds max_tokens
-- [ ] Correctly identifies DOC_README vs DOC_DESIGN
+            if current_tokens + line_tokens > self._max and current_chunk:
+                chunk_text = "\n".join(current_chunk)
+                chunk_end = chunk_start + len(chunk_text.encode())
+                yield RawChunk(
+                    id=ChunkID.from_content(uri, chunk_start, chunk_end),
+                    text=chunk_text,
+                    source_uri=uri,
+                    corpus_type=corpus_type,
+                    byte_range=(chunk_start, chunk_end),
+                    metadata={
+                        "heading": section.heading,
+                        "heading_level": section.level,
+                        "is_partial": True,
+                    },
+                )
+                chunk_start = chunk_end + 1  # +1 for \n
+                current_chunk = []
+                current_tokens = 0
 
-## Dependencies
+            current_chunk.append(line)
+            current_tokens += line_tokens
 
-- Task 1.1 (Token Counter)
-
-## Estimated Time
-
-30 minutes
+        if current_chunk:
+            chunk_text = "\n".join(current_chunk)
+            chunk_end = chunk_start + len(chunk_text.encode())
+            yield RawChunk(
+                id=ChunkID.from_content(uri, chunk_start, chunk_end),
+                text=chunk_text,
+                source_uri=uri,
+                corpus_type=corpus_type,
+                byte_range=(chunk_start, chunk_end),
+                metadata={
+                    "heading": section.heading,
+                    "heading_level": section.level,
+                    "is_partial": True,
+                },
+            )

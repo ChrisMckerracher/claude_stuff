@@ -1,39 +1,35 @@
-# Task 1.4: Thread Chunker
+"""Conversation thread chunking.
 
-**Status:** [ ] Not Started  |  [ ] In Progress  |  [x] Complete
+Parses and chunks conversation threads from Slack exports
+or simple text format, preserving speaker attribution.
+"""
 
-## Objective
-
-Create a chunker for conversation threads that preserves context and speaker attribution.
-
-## File
-
-`rag/chunking/thread_chunker.py`
-
-## Implementation
-
-```python
 import json
 import re
-from typing import Iterator
 from dataclasses import dataclass
 from datetime import datetime
-from rag.core.types import RawChunk, ChunkID, CorpusType
-from rag.core.protocols import Chunker
-from rag.chunking.token_counter import TokenCounter
+from typing import Iterator
+
 from rag.config import MAX_CHUNK_TOKENS
+from rag.core.types import ChunkID, CorpusType, RawChunk
+
+from .token_counter import TokenCounter
+
 
 @dataclass
 class Message:
     """A single message in a conversation."""
+
     speaker: str
     text: str
     timestamp: datetime | None
     thread_id: str | None
 
+
 @dataclass
 class Thread:
     """A conversation thread."""
+
     thread_id: str
     messages: list[Message]
 
@@ -88,7 +84,7 @@ class ThreadChunker:
         - Simple text format: "Speaker: message"
         - Transcript format with timestamps
         """
-        text = content.decode('utf-8', errors='replace')
+        text = content.decode("utf-8", errors="replace")
 
         # Try JSON first (Slack export)
         try:
@@ -103,42 +99,58 @@ class ThreadChunker:
     def _parse_slack_json(self, data: list | dict) -> list[Message]:
         """Parse Slack export JSON."""
         messages = []
-        items = data if isinstance(data, list) else data.get('messages', [])
+        items = data if isinstance(data, list) else data.get("messages", [])
 
         for item in items:
-            if item.get('type') != 'message':
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") != "message":
                 continue
 
-            messages.append(Message(
-                speaker=item.get('user', item.get('username', 'unknown')),
-                text=item.get('text', ''),
-                timestamp=datetime.fromtimestamp(float(item.get('ts', 0))) if item.get('ts') else None,
-                thread_id=item.get('thread_ts'),
-            ))
+            ts_value = item.get("ts")
+            timestamp = None
+            if ts_value:
+                try:
+                    timestamp = datetime.fromtimestamp(float(ts_value))
+                except (ValueError, TypeError, OSError):
+                    pass
+
+            messages.append(
+                Message(
+                    speaker=item.get("user", item.get("username", "unknown")),
+                    text=item.get("text", ""),
+                    timestamp=timestamp,
+                    thread_id=item.get("thread_ts"),
+                )
+            )
 
         return messages
 
     def _parse_text_format(self, text: str) -> list[Message]:
         """Parse simple text format: 'Speaker: message'."""
         messages = []
-        pattern = re.compile(r'^([^:]+):\s*(.+)$', re.MULTILINE)
+        pattern = re.compile(r"^([^:]+):\s*(.+)$", re.MULTILINE)
 
         for match in pattern.finditer(text):
-            messages.append(Message(
-                speaker=match.group(1).strip(),
-                text=match.group(2).strip(),
-                timestamp=None,
-                thread_id=None,
-            ))
+            messages.append(
+                Message(
+                    speaker=match.group(1).strip(),
+                    text=match.group(2).strip(),
+                    timestamp=None,
+                    thread_id=None,
+                )
+            )
 
         # If no pattern matches, treat entire content as one message
         if not messages and text.strip():
-            messages.append(Message(
-                speaker="unknown",
-                text=text.strip(),
-                timestamp=None,
-                thread_id=None,
-            ))
+            messages.append(
+                Message(
+                    speaker="unknown",
+                    text=text.strip(),
+                    timestamp=None,
+                    thread_id=None,
+                )
+            )
 
         return messages
 
@@ -162,7 +174,7 @@ class ThreadChunker:
             timestamp = msg.timestamp.isoformat() if msg.timestamp else ""
             prefix = f"[{timestamp}] " if timestamp else ""
             lines.append(f"{prefix}{msg.speaker}: {msg.text}")
-        return '\n'.join(lines)
+        return "\n".join(lines)
 
     def _make_chunk(
         self,
@@ -171,7 +183,9 @@ class ThreadChunker:
         uri: str,
     ) -> RawChunk:
         """Create RawChunk from thread."""
-        corpus_type = CorpusType.CONVO_SLACK if "slack" in uri.lower() else CorpusType.CONVO_TRANSCRIPT
+        corpus_type = (
+            CorpusType.CONVO_SLACK if "slack" in uri.lower() else CorpusType.CONVO_TRANSCRIPT
+        )
 
         speakers = list(set(m.speaker for m in thread.messages))
 
@@ -198,7 +212,7 @@ class ThreadChunker:
         Ensures each chunk maintains context by including
         speaker information.
         """
-        current_messages = []
+        current_messages: list[Message] = []
         current_tokens = 0
 
         for msg in thread.messages:
@@ -213,9 +227,13 @@ class ThreadChunker:
 
                 # Keep last message for context overlap
                 current_messages = [current_messages[-1]] if current_messages else []
-                current_tokens = self._counter.count(self._format_thread(
-                    Thread(thread_id=thread.thread_id, messages=current_messages)
-                )) if current_messages else 0
+                current_tokens = (
+                    self._counter.count(
+                        self._format_thread(Thread(thread_id=thread.thread_id, messages=current_messages))
+                    )
+                    if current_messages
+                    else 0
+                )
 
             current_messages.append(msg)
             current_tokens += msg_tokens
@@ -225,22 +243,3 @@ class ThreadChunker:
             chunk_thread = Thread(thread_id=thread.thread_id, messages=current_messages)
             chunk_text = self._format_thread(chunk_thread)
             yield self._make_chunk(chunk_thread, chunk_text, uri)
-```
-
-## Acceptance Criteria
-
-- [ ] Implements Chunker protocol
-- [ ] Parses Slack JSON export format
-- [ ] Parses simple text conversation format
-- [ ] Groups messages by thread
-- [ ] Preserves speaker attribution in all chunks
-- [ ] Splits large threads with context overlap
-- [ ] No chunk exceeds max_tokens
-
-## Dependencies
-
-- Task 1.1 (Token Counter)
-
-## Estimated Time
-
-30 minutes
