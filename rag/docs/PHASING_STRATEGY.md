@@ -51,19 +51,29 @@ Dagster Assets (orchestration + observability)
 
 ### Track A: Multi-Repo Code Graph RAG (MVP)
 
-| Phase | Deliverable | Custom Code | Verification |
-|-------|-------------|-------------|--------------|
-| 1 | Project Setup | Dagster + deps config | `dagster dev` runs |
-| 2 | Repo Crawler Asset | ~50 lines | Unit test with fixture repos |
-| 3 | Code Chunks Asset | ~20 lines (configure CodeSplitter) | Chunks look correct |
-| 4 | Service Extractor + Route Linker | ~750 lines (extraction + linking + registry) | Unit test per language + framework |
-| 5 | Vector Index Asset | ~30 lines (configure LanceDB) | Search returns results |
-| 6 | Graph Asset | ~50 lines (configure Graphiti) | Graph queries work |
-| 7 | Hybrid Retriever | ~100 lines | End-to-end test |
+| Phase | Deliverable | Custom Code | Verification | Smoke Test |
+|-------|-------------|-------------|--------------|------------|
+| 1 | Project Setup | Dagster + deps config | `dagster dev` runs | `dagster dev` |
+| 2 | Repo Crawler Asset | ~50 lines | Unit test with fixture repos | See below |
+| 3 | Code Chunks Asset | ~20 lines (configure CodeSplitter) | Chunks look correct | See below |
+| 4a | Python Call Extraction | ~200 lines | Unit test with Python fixtures | See below |
+| 4b | Multi-language Extraction | ~160 lines (+Go, TS, C#) | One fixture per language | See below |
+| 4c | Route Registry | ~100 lines (SQLite storage) | Registry CRUD tests | See below |
+| 4d | FastAPI Route Extraction | ~80 lines | FastAPI fixture app | See below |
+| 4e | Call Linker Integration | ~60 lines | End-to-end linking test | See below |
+| 4f | Other Framework Patterns | ~150 lines (Flask, Gin, Express, ASP.NET) | One fixture per framework | See below |
+| 5 | Vector Index Asset | ~30 lines (configure LanceDB) | Search returns results | See below |
+| 6 | Graph Asset | ~50 lines (configure Graphiti) | Graph queries work | See below |
+| 7 | Hybrid Retriever | ~100 lines | End-to-end test | See below |
 
 **MVP Deliverable:** Working multi-repo code search with graph expansion + Dagster UI.
 
 **Lines of Custom Code:** ~1000 (with route linking + registry)
+
+**Why Split Phase 4?** The original 750-line Phase 4 is 3-4 hours of vibe coding. If something breaks at line 600, you've lost context. Splitting into 4a-4f gives:
+- Testable checkpoints every 1-2 hours
+- Clear rollback points
+- Incremental confidence building
 
 ### Track B: Compliance & Conversations (Post-MVP)
 
@@ -97,6 +107,19 @@ from dataclasses import dataclass
 from typing import Protocol, Literal, Iterator
 import tree_sitter
 
+class Confidence:
+    """Confidence levels for extracted relationships.
+
+    HIGH:   Exact URL match - requests.get("http://user-service/api/users")
+    MEDIUM: Service name in URL - requests.get(f"{USER_SERVICE_URL}/users")
+    LOW:    Inferred from variable - requests.get(service_url)
+    GUESS:  Heuristic match - requests.get(url)  # comment says "user service"
+    """
+    HIGH = 0.9
+    MEDIUM = 0.7
+    LOW = 0.5
+    GUESS = 0.3
+
 @dataclass
 class ServiceCall:
     """Detected inter-service communication."""
@@ -104,7 +127,11 @@ class ServiceCall:
     target_service: str
     call_type: Literal["http", "grpc", "queue_publish", "queue_subscribe"]
     line_number: int
-    confidence: float  # 0.0-1.0, based on pattern certainty
+    confidence: float  # Use Confidence.HIGH/MEDIUM/LOW/GUESS
+    # HTTP-specific fields (None for non-HTTP calls)
+    method: Literal["GET", "POST", "PUT", "DELETE", "PATCH"] | None = None
+    url_path: str | None = None  # /api/users/{id}
+    target_host: str | None = None  # For resolving service name from URL
 
 class PatternMatcher(Protocol):
     """Matches specific call patterns in AST nodes."""
@@ -126,11 +153,48 @@ class HttpCallPattern(PatternMatcher):
     Go: http.Get, http.Post, client.Do
     TS: fetch(), axios.get/post
     C#: HttpClient.GetAsync/PostAsync
+
+    TEST VECTORS - Must Match:
+    -------------------------
+    Python:
+        requests.get("http://user-service/api/users")
+        → ServiceCall(target="user-service", method="GET", path="/api/users",
+                      confidence=Confidence.HIGH)
+
+        httpx.post(f"http://{SERVICE}/users", json=data)
+        → ServiceCall(target=<SERVICE_value>, method="POST", path="/users",
+                      confidence=Confidence.MEDIUM)
+
+        async with aiohttp.ClientSession() as s:
+            await s.get(url)
+        → ServiceCall(target=<from_url>, method="GET", confidence=Confidence.LOW)
+
+    Go:
+        http.Get("http://user-service/api/users")
+        → ServiceCall(target="user-service", method="GET", path="/api/users")
+
+        resp, _ := client.Do(req)
+        → ServiceCall(target=<from_req.URL>, confidence=Confidence.LOW)
+
+    TypeScript:
+        fetch("http://user-service/api/users")
+        → ServiceCall(target="user-service", method="GET", path="/api/users")
+
+        axios.post(`http://${SERVICE}/users`, data)
+        → ServiceCall(target=<SERVICE>, method="POST", confidence=Confidence.MEDIUM)
+
+    Must NOT Match:
+    ---------------
+        requests.get(local_file_path)      # No http://
+        urllib.parse.urlparse(url)         # Parsing, not calling
+        http.StatusOK                      # Constant, not call
+        "http://example.com" in docstring  # String literal in docs
     """
-    URL_REGEX = re.compile(r'https?://([^/]+)')
+    URL_REGEX = re.compile(r'https?://([^/:]+)')
+    PATH_REGEX = re.compile(r'https?://[^/]+(/[^"\')\s]+)')
 
     def match(self, node: tree_sitter.Node, source: bytes) -> list[ServiceCall]:
-        # ~20 lines: check node type, extract URL, infer service name
+        # ~30 lines: check node type, extract URL, infer service name
         ...
 
 class GrpcCallPattern(PatternMatcher):
@@ -138,9 +202,28 @@ class GrpcCallPattern(PatternMatcher):
 
     Python: grpc.insecure_channel(), stub.Method()
     Go: grpc.Dial(), client.Method()
+
+    TEST VECTORS - Must Match:
+    -------------------------
+    Python:
+        channel = grpc.insecure_channel("user-service:50051")
+        → ServiceCall(target="user-service", call_type="grpc", confidence=HIGH)
+
+        stub = UserServiceStub(channel)
+        response = stub.GetUser(request)
+        → (channel provides target, stub.GetUser is the call)
+
+    Go:
+        conn, _ := grpc.Dial("user-service:50051", grpc.WithInsecure())
+        → ServiceCall(target="user-service", call_type="grpc")
+
+    Must NOT Match:
+    ---------------
+        grpc.StatusCode.OK                 # Enum, not call
+        grpc.UnaryUnaryClientInterceptor   # Type, not call
     """
     def match(self, node: tree_sitter.Node, source: bytes) -> list[ServiceCall]:
-        # ~20 lines
+        # ~25 lines
         ...
 
 class QueuePublishPattern(PatternMatcher):
@@ -148,15 +231,49 @@ class QueuePublishPattern(PatternMatcher):
 
     Python: channel.basic_publish(), producer.send()
     Go: channel.Publish(), producer.Produce()
+
+    TEST VECTORS - Must Match:
+    -------------------------
+    Python (RabbitMQ):
+        channel.basic_publish(exchange='', routing_key='user-events', body=msg)
+        → ServiceCall(target="user-events", call_type="queue_publish")
+
+    Python (Kafka):
+        producer.send('user-events', value=msg)
+        → ServiceCall(target="user-events", call_type="queue_publish")
+
+    Go (RabbitMQ):
+        ch.Publish("", "user-events", false, false, msg)
+        → ServiceCall(target="user-events", call_type="queue_publish")
+
+    Must NOT Match:
+    ---------------
+        channel.queue_declare(queue='user-events')  # Declaration, not publish
+        consumer.subscribe(['user-events'])         # Subscribe, not publish
     """
     def match(self, node: tree_sitter.Node, source: bytes) -> list[ServiceCall]:
-        # ~20 lines
+        # ~25 lines
         ...
 
 class QueueSubscribePattern(PatternMatcher):
-    """Matches message queue subscribe operations."""
+    """Matches message queue subscribe operations.
+
+    TEST VECTORS - Must Match:
+    -------------------------
+    Python (RabbitMQ):
+        channel.basic_consume(queue='user-events', on_message_callback=handler)
+        → ServiceCall(target="user-events", call_type="queue_subscribe")
+
+    Python (Kafka):
+        consumer.subscribe(['user-events', 'order-events'])
+        → ServiceCall(target="user-events"), ServiceCall(target="order-events")
+
+    Go:
+        msgs, _ := ch.Consume("user-events", "", true, false, false, false, nil)
+        → ServiceCall(target="user-events", call_type="queue_subscribe")
+    """
     def match(self, node: tree_sitter.Node, source: bytes) -> list[ServiceCall]:
-        # ~15 lines
+        # ~20 lines
         ...
 ```
 
@@ -249,6 +366,61 @@ Same structure as Python, different:
 | `languages/typescript.py` | 50 | TypeScript AST walking |
 | `languages/csharp.py` | 50 | C# AST walking |
 | **Total** | **360** | |
+
+### Phone-Optimized File Structure
+
+For vibe coding on phone, minimize file switching. Start with consolidated files, split later when stable:
+
+```
+rag/
+├── types.py           # ALL types, protocols, schema, errors (~200 lines)
+│                      # - ChunkID, RawChunk, CleanChunk, EmbeddedChunk
+│                      # - ServiceCall, RouteDefinition, ServiceRelation
+│                      # - VectorStore, GraphStore, Scrubber protocols
+│                      # - All error types
+│
+├── extractors.py      # ALL extraction code (~750 lines)
+│                      # - HttpCallPattern, GrpcCallPattern, QueuePatterns
+│                      # - PythonExtractor, GoExtractor, etc.
+│                      # - RouteExtractor, framework patterns
+│                      # - RouteRegistry, SQLiteRegistry
+│                      # - CallLinker
+│
+├── stores.py          # ALL storage implementations (~300 lines)
+│                      # - LanceStore (VectorStore impl)
+│                      # - MockGraphStore (testing)
+│                      # - GraphitiStore (production)
+│
+├── retrieval.py       # Retrieval layer (~150 lines)
+│                      # - HybridRetriever
+│                      # - Reranker
+│
+├── pipeline.py        # Dagster assets + orchestration (~200 lines)
+│                      # - All @asset definitions
+│                      # - IngestionOrchestrator
+│
+└── tests/
+    └── test_all.py    # ALL tests in one file (~500 lines)
+                       # - Organized by # === SECTION === comments
+                       # - Easy to run subset: pytest -k "test_python"
+```
+
+**Why consolidated?**
+- One file open = full context visible
+- No "which file was that in?" confusion
+- Copy-paste between sections is easy
+- Split into submodules AFTER it works
+
+**Checkpoint markers in code:**
+```python
+# === CHECKPOINT: Python HTTP extraction complete ===
+# Smoke test: pytest tests/test_all.py::test_python_http_calls
+# Next: Add gRPC patterns
+
+# === CHECKPOINT: Route registry complete ===
+# Smoke test: pytest tests/test_all.py::test_registry_crud
+# Next: Add FastAPI route extraction
+```
 
 ---
 
@@ -502,27 +674,63 @@ class RouteRegistry(Protocol):
     """Protocol for storing and querying route definitions.
 
     Implementations can be in-memory (testing) or persistent (SQLite).
+
+    Thread Safety: Implementations should be thread-safe for concurrent reads.
+    Write operations (add_routes, clear) may require external synchronization.
     """
 
     def add_routes(self, service: str, routes: list[RouteDefinition]) -> None:
-        """Store routes for a service. Replaces existing routes for that service."""
+        """Store routes for a service. Replaces existing routes for that service.
+
+        Args:
+            service: Service name (e.g., "user-service")
+            routes: List of route definitions to store
+
+        Behavior:
+            - Overwrites all existing routes for the service
+            - Empty list clears routes for that service
+        """
         ...
 
     def get_routes(self, service: str) -> list[RouteDefinition]:
-        """Get all routes for a service. Returns empty list if service unknown."""
+        """Get all routes for a service.
+
+        Returns:
+            List of routes, or empty list if service unknown.
+        """
         ...
 
-    def find_route(
+    def find_route_by_request(
         self,
         service: str,
         method: str,
-        path: str
+        request_path: str,
     ) -> RouteDefinition | None:
-        """Find a route matching the method and path pattern.
+        """Find a route that matches an actual HTTP request.
 
-        Path matching handles parameterized routes:
-        - /api/users/123 matches /api/users/{user_id}
-        - /api/orders/456/items matches /api/orders/{id}/items
+        Args:
+            service: Target service name
+            method: HTTP method (GET, POST, PUT, DELETE, PATCH)
+            request_path: Actual request path, e.g., "/api/users/123"
+
+        Returns:
+            Matching RouteDefinition or None if no match.
+
+        Matching Rules:
+            - /api/users/123 matches pattern /api/users/{user_id}
+            - /api/orders/456/items matches pattern /api/orders/{id}/items
+            - Exact matches take priority over parameterized matches
+            - Method must match exactly (case-insensitive)
+
+        Examples:
+            find_route_by_request("user-service", "GET", "/api/users/123")
+            → RouteDefinition(path="/api/users/{user_id}", handler="get_user")
+
+            find_route_by_request("user-service", "POST", "/api/users")
+            → RouteDefinition(path="/api/users", handler="create_user")
+
+            find_route_by_request("user-service", "GET", "/api/unknown")
+            → None
         """
         ...
 
@@ -531,7 +739,11 @@ class RouteRegistry(Protocol):
         ...
 
     def clear(self, service: str | None = None) -> None:
-        """Clear routes. If service specified, only that service. Else all."""
+        """Clear routes.
+
+        Args:
+            service: If provided, clear only that service. If None, clear all.
+        """
         ...
 ```
 
@@ -552,22 +764,22 @@ class InMemoryRegistry(RouteRegistry):
     def get_routes(self, service: str) -> list[RouteDefinition]:
         return self._routes.get(service, [])
 
-    def find_route(
+    def find_route_by_request(
         self,
         service: str,
         method: str,
-        path: str
+        request_path: str,
     ) -> RouteDefinition | None:
         for route in self.get_routes(service):
-            if route.method == method and self._path_matches(route.path, path):
+            if route.method.upper() == method.upper() and self._path_matches(route.path, request_path):
                 return route
         return None
 
-    def _path_matches(self, pattern: str, path: str) -> bool:
-        """Match /api/users/{user_id} against /api/users/123."""
+    def _path_matches(self, pattern: str, request_path: str) -> bool:
+        """Match pattern /api/users/{user_id} against request /api/users/123."""
         import re
         regex = re.sub(r'\{[^}]+\}', r'[^/]+', pattern)
-        return re.match(f"^{regex}$", path) is not None
+        return re.match(f"^{regex}$", request_path) is not None
 
     def all_services(self) -> list[str]:
         return list(self._routes.keys())
@@ -636,17 +848,19 @@ class SQLiteRegistry(RouteRegistry):
             ).fetchall()
             return [RouteDefinition(*row) for row in rows]
 
-    def find_route(self, service: str, method: str, path: str) -> RouteDefinition | None:
+    def find_route_by_request(
+        self, service: str, method: str, request_path: str
+    ) -> RouteDefinition | None:
         # For pattern matching, we need to load routes and match in Python
         for route in self.get_routes(service):
-            if route.method == method and self._path_matches(route.path, path):
+            if route.method.upper() == method.upper() and self._path_matches(route.path, request_path):
                 return route
         return None
 
-    def _path_matches(self, pattern: str, path: str) -> bool:
+    def _path_matches(self, pattern: str, request_path: str) -> bool:
         import re
         regex = re.sub(r'\{[^}]+\}', r'[^/]+', pattern)
-        return re.match(f"^{regex}$", path) is not None
+        return re.match(f"^{regex}$", request_path) is not None
 
     def all_services(self) -> list[str]:
         with self._conn() as conn:
@@ -701,69 +915,113 @@ raw_code_files (all repos)
 ```python
 # rag/dagster/assets.py
 
-from dagster import asset, AssetIn
+from dataclasses import dataclass
+from dagster import asset, AssetIn, Config
 from rag.extractors.routes import RouteExtractor
 from rag.extractors.sqlite_registry import SQLiteRegistry
 from rag.extractors.extractor import ServiceExtractor
 from rag.extractors.linker import CallLinker
+import asyncio
 
+
+# === Typed Asset Outputs ===
+# Using typed outputs ensures Dagster can validate dependencies
+
+@dataclass
+class RawCodeFilesOutput:
+    """Output of raw_code_files asset."""
+    files_by_service: dict[str, list[Path]]
+    total_files: int
+
+@dataclass
+class RouteRegistryOutput:
+    """Output of route_registry asset."""
+    db_path: str
+    service_count: int
+    route_count: int
+
+    def load(self) -> SQLiteRegistry:
+        """Load the registry. Raises if DB doesn't exist."""
+        if not Path(self.db_path).exists():
+            raise FileNotFoundError(f"Route registry not found: {self.db_path}")
+        return SQLiteRegistry(self.db_path)
+
+@dataclass
+class ServiceRelationsOutput:
+    """Output of service_relations asset."""
+    relations: list[ServiceRelation]
+    linked_count: int      # Successfully linked to handler
+    unlinked_count: int    # Call detected but no handler found
+
+@dataclass
+class KnowledgeGraphOutput:
+    """Output of knowledge_graph asset."""
+    entity_count: int
+    relationship_count: int
+
+
+# === Asset Definitions ===
 
 @asset
-def raw_code_files(config: Config) -> dict[str, list[Path]]:
-    """Crawl all repos and return files grouped by service.
-
-    Returns:
-        {"user-service": [Path(...), ...], "auth-service": [...]}
-    """
-    result = {}
+def raw_code_files(config: Config) -> RawCodeFilesOutput:
+    """Crawl all repos and return files grouped by service."""
+    files_by_service = {}
+    total = 0
     for repo in config.repos:
         service_name = repo.name
-        result[service_name] = list(crawl_repo(repo.path))
-    return result
+        files = list(crawl_repo(repo.path))
+        files_by_service[service_name] = files
+        total += len(files)
+    return RawCodeFilesOutput(files_by_service=files_by_service, total_files=total)
 
 
 @asset
-def route_registry(raw_code_files: dict[str, list[Path]]) -> str:
+def route_registry(raw_code_files: RawCodeFilesOutput) -> RouteRegistryOutput:
     """Extract routes from ALL services and store in SQLite.
 
     This MUST complete before service_relations can run.
-
-    Returns:
-        Path to SQLite database (for downstream assets to use)
     """
     db_path = "./data/routes.db"
     registry = SQLiteRegistry(db_path)
     registry.clear()  # Fresh start
 
     extractor = RouteExtractor()
+    total_routes = 0
 
-    for service_name, files in raw_code_files.items():
+    for service_name, files in raw_code_files.files_by_service.items():
         routes = []
         for file_path in files:
             content = file_path.read_bytes()
             routes.extend(extractor.extract(content, str(file_path), service_name))
 
         registry.add_routes(service_name, routes)
+        total_routes += len(routes)
 
-    return db_path
+    return RouteRegistryOutput(
+        db_path=db_path,
+        service_count=len(raw_code_files.files_by_service),
+        route_count=total_routes,
+    )
 
 
 @asset
 def service_relations(
-    raw_code_files: dict[str, list[Path]],
-    route_registry: str  # DB path from route_registry asset
-) -> list[ServiceRelation]:
+    raw_code_files: RawCodeFilesOutput,
+    route_registry: RouteRegistryOutput,
+) -> ServiceRelationsOutput:
     """Extract service calls and link to handlers using the registry.
 
     Depends on route_registry so all routes are available before linking.
     """
-    registry = SQLiteRegistry(route_registry)  # Load from DB
+    registry = route_registry.load()  # Type-safe loading
     linker = CallLinker(registry)
     extractor = ServiceExtractor()
 
     relations = []
+    linked = 0
+    unlinked = 0
 
-    for service_name, files in raw_code_files.items():
+    for service_name, files in raw_code_files.files_by_service.items():
         for file_path in files:
             content = file_path.read_bytes()
 
@@ -774,45 +1032,67 @@ def service_relations(
             for call in calls:
                 relation = linker.link(call)
                 relations.append(relation)
+                if relation.target_function != "<unknown>":
+                    linked += 1
+                else:
+                    unlinked += 1
 
-    return relations
+    return ServiceRelationsOutput(
+        relations=relations,
+        linked_count=linked,
+        unlinked_count=unlinked,
+    )
 
 
 @asset
-def knowledge_graph(service_relations: list[ServiceRelation]) -> str:
+def knowledge_graph(service_relations: ServiceRelationsOutput) -> KnowledgeGraphOutput:
     """Write service relations to Graphiti.
 
     Creates edges like:
         (auth-service/login.py) --HTTP_CALL--> (user-service/user_controller.py)
+
+    NOTE: This asset uses async internally but presents a sync interface to Dagster.
     """
-    graph = GraphitiStore(...)
+    async def _ingest() -> tuple[int, int]:
+        async with GraphitiStore.from_env() as graph:
+            entity_count = 0
+            rel_count = 0
 
-    for rel in service_relations:
-        # Add source file as entity
-        source_entity = await graph.add_entity(Entity(
-            type=EntityType.FILE,
-            name=rel.source_file,
-        ))
+            for rel in service_relations.relations:
+                # Add source file as entity
+                source_entity = await graph.add_entity(Entity(
+                    type=EntityType.FILE,
+                    name=rel.source_file,
+                ))
+                entity_count += 1
 
-        # Add target file as entity
-        target_entity = await graph.add_entity(Entity(
-            type=EntityType.FILE,
-            name=rel.target_file,
-        ))
+                # Add target file as entity
+                target_entity = await graph.add_entity(Entity(
+                    type=EntityType.FILE,
+                    name=rel.target_file,
+                ))
+                entity_count += 1
 
-        # Add relationship
-        await graph.add_relationship(
-            source=source_entity.id,
-            target=target_entity.id,
-            rel_type=RelationType.CALLS,
-            properties={
-                "call_type": rel.relation_type,
-                "route_path": rel.route_path,
-                "source_line": rel.source_line,
-            }
-        )
+                # Add relationship
+                await graph.add_relationship(
+                    source=source_entity.id,
+                    target=target_entity.id,
+                    rel_type=RelationType.CALLS,
+                    properties={
+                        "call_type": rel.relation_type,
+                        "route_path": rel.route_path,
+                        "source_line": rel.source_line,
+                    }
+                )
+                rel_count += 1
 
-    return "knowledge_graph_complete"
+            return entity_count, rel_count
+
+    entity_count, rel_count = asyncio.run(_ingest())
+    return KnowledgeGraphOutput(
+        entity_count=entity_count,
+        relationship_count=rel_count,
+    )
 ```
 
 ### Execution Order Guarantee
@@ -903,14 +1183,35 @@ class CorpusType(Enum):
 from typing import Protocol, AsyncIterator
 
 class VectorStore(Protocol):
-    """Protocol for vector similarity search."""
+    """Protocol for vector similarity search.
+
+    Thread Safety: All methods should be safe for concurrent calls.
+    """
 
     async def insert(self, chunk: EmbeddedChunk) -> None:
-        """Insert chunk. Idempotent on chunk.id."""
+        """Insert chunk. Idempotent on chunk.id.
+
+        Idempotency:
+            - Same ID + same content hash → no-op
+            - Same ID + different content → raises DuplicateChunkError
+
+        Raises:
+            StorageError: Storage backend unavailable or full
+            DimensionMismatchError: Vector dimension != store's configured dimension
+            DuplicateChunkError: Same ID exists with different content hash
+        """
         ...
 
     async def insert_batch(self, chunks: list[EmbeddedChunk]) -> int:
-        """Batch insert. Returns count inserted."""
+        """Batch insert. Returns count successfully inserted.
+
+        Partial Success: Inserts as many as possible, returns count.
+        Failed chunks can be identified by re-checking existence.
+
+        Raises:
+            StorageError: Storage backend unavailable (no chunks inserted)
+            DimensionMismatchError: Any vector has wrong dimension (no chunks inserted)
+        """
         ...
 
     async def search(
@@ -920,19 +1221,44 @@ class VectorStore(Protocol):
         limit: int = 10,
         filters: dict[str, Any] | None = None,
     ) -> list[SearchResult]:
-        """Similarity search. Returns ranked results."""
+        """Similarity search. Returns ranked results.
+
+        Returns:
+            List of results sorted by descending similarity score.
+            Empty list if no matches (not an error).
+
+        Raises:
+            StorageError: Storage backend unavailable
+            DimensionMismatchError: Query vector dimension != store's dimension
+            InvalidFilterError: Filter references unknown field
+        """
         ...
 
     async def delete(self, chunk_id: ChunkID) -> bool:
-        """Delete by ID. Returns True if existed."""
+        """Delete by ID. Returns True if existed.
+
+        Raises:
+            StorageError: Storage backend unavailable
+        """
         ...
 
 
 class GraphStore(Protocol):
-    """Protocol for knowledge graph operations."""
+    """Protocol for knowledge graph operations.
+
+    Thread Safety: All methods should be safe for concurrent calls.
+    """
 
     async def add_entity(self, entity: Entity) -> EntityID:
-        """Add or update entity. Returns ID."""
+        """Add or update entity. Returns ID.
+
+        Upsert Behavior:
+            - If entity with same (type, name) exists → update properties
+            - Otherwise → create new entity
+
+        Raises:
+            StorageError: Graph backend unavailable
+        """
         ...
 
     async def add_relationship(
@@ -942,7 +1268,16 @@ class GraphStore(Protocol):
         rel_type: RelationType,
         properties: dict[str, Any],
     ) -> RelationshipID:
-        """Add directed edge. Returns ID."""
+        """Add directed edge. Returns ID.
+
+        Upsert Behavior:
+            - If edge (source, target, rel_type) exists → update properties
+            - Otherwise → create new edge
+
+        Raises:
+            StorageError: Graph backend unavailable
+            EntityNotFoundError: Source or target entity doesn't exist
+        """
         ...
 
     async def search_entities(
@@ -952,7 +1287,15 @@ class GraphStore(Protocol):
         entity_types: list[EntityType] | None = None,
         limit: int = 10,
     ) -> list[Entity]:
-        """Semantic entity search."""
+        """Semantic entity search.
+
+        Returns:
+            Entities matching query, ranked by relevance.
+            Empty list if no matches (not an error).
+
+        Raises:
+            StorageError: Graph backend unavailable
+        """
         ...
 
     async def get_neighbors(
@@ -963,7 +1306,16 @@ class GraphStore(Protocol):
         direction: Literal["in", "out", "both"] = "both",
         max_hops: int = 1,
     ) -> list[tuple[Entity, Relationship]]:
-        """Graph traversal."""
+        """Graph traversal. BFS from entity.
+
+        Returns:
+            List of (entity, relationship) tuples within max_hops.
+            Empty list if entity has no neighbors (not an error).
+
+        Raises:
+            StorageError: Graph backend unavailable
+            EntityNotFoundError: Starting entity doesn't exist
+        """
         ...
 
     async def add_episode(
@@ -973,7 +1325,21 @@ class GraphStore(Protocol):
         source: str,
         timestamp: datetime | None = None,
     ) -> list[Entity]:
-        """Ingest text, extract entities. Returns extracted."""
+        """Ingest text, extract entities via LLM. Returns extracted entities.
+
+        Episode Semantics:
+            - One episode = one semantic unit (fact, conversation thread, etc.)
+            - Graphiti uses LLM to extract entities and relationships
+            - Extracted entities are automatically added to the graph
+
+        Returns:
+            List of entities extracted from the text.
+            May be empty if no entities detected.
+
+        Raises:
+            StorageError: Graph backend unavailable
+            LLMError: Entity extraction LLM call failed
+        """
         ...
 ```
 
@@ -997,15 +1363,41 @@ class Chunker(Protocol):
         ...
 
 
+@dataclass
+class ScrubResult:
+    """Result of scrubbing a single chunk."""
+    chunk_id: ChunkID
+    clean_chunk: CleanChunk | None  # None if failed
+    error: str | None  # None if successful
+
+    @property
+    def success(self) -> bool:
+        return self.clean_chunk is not None
+
+
 class Scrubber(Protocol):
     """Protocol for PHI removal."""
 
     def scrub(self, chunk: RawChunk) -> CleanChunk:
-        """Remove PHI, return clean chunk with audit log."""
+        """Remove PHI, return clean chunk with audit log.
+
+        Raises:
+            ScrubError: Scrubbing failed (e.g., encoding issues, analyzer error)
+        """
         ...
 
-    def scrub_batch(self, chunks: list[RawChunk]) -> list[CleanChunk]:
-        """Batch scrubbing for efficiency."""
+    def scrub_batch(self, chunks: list[RawChunk]) -> list[ScrubResult]:
+        """Batch scrubbing for efficiency. Never raises.
+
+        Returns:
+            List of ScrubResult in same order as input chunks.
+            Check result.success to determine if scrubbing succeeded.
+            Failed chunks have result.error set.
+
+        Error Handling:
+            - Individual chunk failures don't affect other chunks
+            - All chunks are attempted even if some fail
+        """
         ...
 
 
@@ -2229,6 +2621,278 @@ Query (string)
 
 ---
 
+## Smoke Tests & Acceptance Criteria
+
+Each phase has a concrete "it works" command and acceptance test.
+
+### Phase 2: Repo Crawler
+
+**Smoke Test:**
+```bash
+python -c "
+from rag.pipeline import raw_code_files, Config
+result = raw_code_files(Config(repos=[{'name': 'test', 'path': '.'}]))
+print(f'Found {result.total_files} files')
+assert result.total_files > 0, 'Should find at least one file'
+"
+```
+
+### Phase 3: Code Chunks
+
+**Smoke Test:**
+```bash
+python -c "
+from llama_index.core.node_parser import CodeSplitter
+from pathlib import Path
+
+splitter = CodeSplitter(language='python', chunk_lines=40, chunk_lines_overlap=10)
+code = Path('rag/types.py').read_text()
+chunks = splitter.split_text(code)
+print(f'Created {len(chunks)} chunks')
+assert len(chunks) > 0, 'Should create at least one chunk'
+"
+```
+
+### Phase 4a: Python Call Extraction
+
+**Smoke Test:**
+```bash
+python -c "
+from rag.extractors import ServiceExtractor
+
+code = b'''
+import requests
+def fetch_user(user_id):
+    return requests.get(f\"http://user-service/api/users/{user_id}\")
+'''
+
+extractor = ServiceExtractor()
+calls = extractor.extract_from_file('test.py', code)
+print(f'Found {len(calls)} calls: {calls}')
+assert len(calls) == 1, 'Should find one HTTP call'
+assert calls[0].target_service == 'user-service', 'Should detect user-service'
+"
+```
+
+### Phase 4c: Route Registry
+
+**Smoke Test:**
+```bash
+python -c "
+from rag.extractors import SQLiteRegistry, RouteDefinition
+import tempfile, os
+
+with tempfile.TemporaryDirectory() as d:
+    registry = SQLiteRegistry(os.path.join(d, 'routes.db'))
+    registry.add_routes('user-service', [
+        RouteDefinition('user-service', 'GET', '/api/users/{id}', 'user.py', 'get_user', 10)
+    ])
+    route = registry.find_route_by_request('user-service', 'GET', '/api/users/123')
+    print(f'Found route: {route}')
+    assert route is not None, 'Should find matching route'
+    assert route.handler_function == 'get_user'
+"
+```
+
+### Phase 4e: Call Linker Integration
+
+**Smoke Test:**
+```bash
+python -c "
+from rag.extractors import CallLinker, SQLiteRegistry, ServiceCall, RouteDefinition
+import tempfile, os
+
+with tempfile.TemporaryDirectory() as d:
+    registry = SQLiteRegistry(os.path.join(d, 'routes.db'))
+    registry.add_routes('user-service', [
+        RouteDefinition('user-service', 'GET', '/api/users/{id}', 'controllers/user.py', 'get_user', 10)
+    ])
+
+    linker = CallLinker(registry)
+    call = ServiceCall(
+        source_file='auth/login.py',
+        target_service='user-service',
+        call_type='http',
+        line_number=25,
+        confidence=0.9,
+        method='GET',
+        url_path='/api/users/123',
+    )
+    relation = linker.link(call)
+    print(f'Linked: {relation}')
+    assert relation.target_function == 'get_user', 'Should link to handler'
+"
+```
+
+### Phase 5: Vector Index
+
+**Smoke Test:**
+```bash
+python -c "
+from rag.stores import LanceStore
+from rag.types import EmbeddedChunk, CleanChunk, ChunkID, CorpusType
+import tempfile, asyncio
+
+async def test():
+    with tempfile.TemporaryDirectory() as d:
+        store = LanceStore(db_path=d)
+        chunk = EmbeddedChunk(
+            chunk=CleanChunk(
+                id=ChunkID.from_content('test.py', 0, 100),
+                text='def hello(): pass',
+                source_uri='test.py',
+                corpus_type=CorpusType.CODE_LOGIC,
+                context_prefix='test.py',
+                metadata={},
+                scrub_log=[],
+            ),
+            vector=[0.1] * 768,
+        )
+        await store.insert(chunk)
+        results = await store.search([0.1] * 768, limit=1)
+        print(f'Found {len(results)} results')
+        assert len(results) == 1, 'Should find inserted chunk'
+
+asyncio.run(test())
+"
+```
+
+### Phase 7: Hybrid Retriever (Acceptance Test)
+
+**Acceptance Test - MUST PASS for MVP complete:**
+```python
+async def test_hybrid_retrieval_finds_related_code():
+    \"\"\"MUST PASS for Phase 7 to be complete.\"\"\"
+    # Setup: index two related services
+    await ingest("fixtures/auth-service/")  # calls user-service
+    await ingest("fixtures/user-service/")  # has /api/users endpoint
+
+    # Query about auth
+    results = await retriever.search("user authentication")
+
+    # MUST find both services
+    files = {r.chunk.source_uri for r in results}
+    assert any("auth-service" in f for f in files), "Should find auth code"
+    assert any("user-service" in f for f in files), "Should find related user code via graph"
+
+    # MUST rank auth higher (direct match)
+    auth_rank = next(i for i, r in enumerate(results) if "auth" in r.chunk.source_uri)
+    user_rank = next(i for i, r in enumerate(results) if "user" in r.chunk.source_uri)
+    assert auth_rank < user_rank, "Direct match should rank higher than graph expansion"
+```
+
+---
+
+## Incremental Update Strategy
+
+The base design assumes full reindex. This section adds incremental updates for when the pipeline takes 30+ minutes.
+
+### File Change Detection
+
+```python
+@dataclass
+class FileChange:
+    path: str
+    change_type: Literal["added", "modified", "deleted"]
+    old_hash: str | None  # SHA256 of previous content
+    new_hash: str | None  # SHA256 of current content
+
+@dataclass
+class Manifest:
+    \"\"\"Tracks indexed file state.\"\"\"
+    files: dict[str, str]  # path → content hash
+    timestamp: datetime
+
+    def diff(self, current_files: dict[str, str]) -> list[FileChange]:
+        \"\"\"Compute changes since last index.\"\"\"
+        changes = []
+
+        # Deleted files
+        for path, old_hash in self.files.items():
+            if path not in current_files:
+                changes.append(FileChange(path, "deleted", old_hash, None))
+
+        # Added or modified files
+        for path, new_hash in current_files.items():
+            old_hash = self.files.get(path)
+            if old_hash is None:
+                changes.append(FileChange(path, "added", None, new_hash))
+            elif old_hash != new_hash:
+                changes.append(FileChange(path, "modified", old_hash, new_hash))
+
+        return changes
+```
+
+### Incremental Dagster Assets
+
+```python
+@asset
+def manifest(raw_code_files: RawCodeFilesOutput) -> Manifest:
+    \"\"\"Compute current file manifest.\"\"\"
+    files = {}
+    for service, paths in raw_code_files.files_by_service.items():
+        for path in paths:
+            content_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+            files[str(path)] = content_hash
+    return Manifest(files=files, timestamp=datetime.now())
+
+@asset
+def changed_files(
+    manifest: Manifest,
+    previous_manifest: Manifest | None,  # From last successful run
+) -> list[FileChange]:
+    \"\"\"Detect files that changed since last run.\"\"\"
+    if previous_manifest is None:
+        # First run - everything is "added"
+        return [FileChange(p, "added", None, h) for p, h in manifest.files.items()]
+    return previous_manifest.diff(manifest.files)
+
+@asset
+def incremental_service_relations(
+    changed_files: list[FileChange],
+    route_registry: RouteRegistryOutput,
+    existing_relations: list[ServiceRelation],  # From previous run
+) -> ServiceRelationsOutput:
+    \"\"\"Only process changed files.\"\"\"
+    registry = route_registry.load()
+    linker = CallLinker(registry)
+    extractor = ServiceExtractor()
+
+    # Start with existing relations, minus deleted files
+    deleted_paths = {c.path for c in changed_files if c.change_type == "deleted"}
+    relations = [r for r in existing_relations if r.source_file not in deleted_paths]
+
+    # Process added/modified files
+    for change in changed_files:
+        if change.change_type in ("added", "modified"):
+            # Remove old relations for this file
+            relations = [r for r in relations if r.source_file != change.path]
+
+            # Extract new relations
+            content = Path(change.path).read_bytes()
+            calls = extractor.extract_from_file(change.path, content)
+            for call in calls:
+                relations.append(linker.link(call))
+
+    return ServiceRelationsOutput(
+        relations=relations,
+        linked_count=sum(1 for r in relations if r.target_function != "<unknown>"),
+        unlinked_count=sum(1 for r in relations if r.target_function == "<unknown>"),
+    )
+```
+
+### When to Use Incremental vs Full
+
+| Scenario | Strategy |
+|----------|----------|
+| First run | Full index |
+| < 10 files changed | Incremental |
+| Schema change (new entity types) | Full reindex |
+| > 50% files changed | Full reindex (faster) |
+| Route patterns changed | Full reindex (call linking affected) |
+
+---
+
 ## Verification Summary
 
 ### Track A (MVP) - Dagster + LlamaIndex + Graphiti
@@ -2238,13 +2902,19 @@ Query (string)
 | 1 | ~0 | - | Dagster |
 | 2 | ~50 | `raw_code_files` | git |
 | 3 | ~20 | `code_chunks` | LlamaIndex |
-| 4a | ~100 | `route_registry` | tree-sitter, SQLite |
-| 4b | ~650 | `service_relations` | tree-sitter + linking |
+| 4a | ~200 | `service_relations` (Python only) | tree-sitter |
+| 4b | ~160 | `service_relations` (+Go, TS, C#) | tree-sitter |
+| 4c | ~100 | `route_registry` | SQLite |
+| 4d | ~80 | `route_registry` (FastAPI) | tree-sitter |
+| 4e | ~60 | `service_relations` (linker) | - |
+| 4f | ~150 | `route_registry` (Flask, Gin, Express, ASP.NET) | tree-sitter |
 | 5 | ~30 | `vector_index` | LanceDB |
 | 6 | ~50 | `knowledge_graph` | Graphiti + Neo4j Aura |
 | 7 | ~100 | `retriever` | - |
 
 **MVP Total: ~1000 custom lines**
+
+**Phase 4 Breakdown:** 200 + 160 + 100 + 80 + 60 + 150 = 750 lines, split into testable chunks
 
 ### Track B (Post-MVP)
 
@@ -2258,15 +2928,27 @@ Query (string)
 ## Build Order
 
 ### MVP Path (Phases 1-7)
+
 ```
-1. Project Setup      → pip install dagster llama-index graphiti-core lancedb
-2. Repo Crawler       → @asset raw_code_files
-3. Code Chunks        → @asset code_chunks (LlamaIndex CodeSplitter)
-4. Service Extractor  → @asset service_relations (custom tree-sitter)
-5. Vector Index       → @asset vector_index (LanceDB)
-6. Knowledge Graph    → @asset knowledge_graph (Graphiti)
-7. Hybrid Retriever   → Query both stores
+1.  Project Setup      → pip install dagster llama-index graphiti-core lancedb
+2.  Repo Crawler       → @asset raw_code_files
+3.  Code Chunks        → @asset code_chunks (LlamaIndex CodeSplitter)
+4a. Python Extraction  → HttpCallPattern + PythonExtractor
+4b. Multi-language     → GoExtractor, TypeScriptExtractor, CSharpExtractor
+4c. Route Registry     → SQLiteRegistry + InMemoryRegistry
+4d. FastAPI Routes     → FastAPIPattern
+4e. Call Linker        → CallLinker + ServiceRelation
+4f. Other Frameworks   → FlaskPattern, GinPattern, ExpressPattern, AspNetPattern
+5.  Vector Index       → @asset vector_index (LanceDB)
+6.  Knowledge Graph    → @asset knowledge_graph (Graphiti)
+7.  Hybrid Retriever   → Query both stores
 ```
+
+**Checkpoint Gates:**
+- After 4a: Can detect Python HTTP calls → commit
+- After 4c: Can store/query routes → commit
+- After 4e: Can link calls to handlers → commit
+- After 7: Full MVP working → tag release
 
 **At Phase 7:** `dagster dev` shows full pipeline, search works.
 
