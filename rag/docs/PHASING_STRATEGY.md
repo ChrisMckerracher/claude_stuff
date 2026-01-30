@@ -14,19 +14,31 @@
 - Mock implementations for offline verification
 - Control flow diagrams for each module
 
-**Framework Decision: LlamaIndex as Backbone**
+**Framework Decisions**
 
-Rather than building custom ingestion infrastructure, we use LlamaIndex which provides:
-- `IngestionPipeline` - orchestration we don't need to build
-- `CodeSplitter` - tree-sitter AST chunking built-in
-- `SimpleDirectoryReader` - file crawling with 160+ format support
-- `llama-index-vector-stores-lancedb` - LanceDB integration
-- `KnowledgeGraphIndex` - graph construction (alternative to Graphiti)
+| Layer | Tool | Why |
+|-------|------|-----|
+| **Orchestration** | Dagster | Asset lineage, retries, observability UI, testing harness |
+| **Chunking** | LlamaIndex CodeSplitter | Tree-sitter AST chunking built-in |
+| **Vector Store** | LanceDB | Embedded, no server needed |
+| **Graph Store** | Graphiti + Neo4j Aura | Temporal awareness, LLM entity extraction |
+| **PHI Scrubbing** | Presidio | Mature, configurable PII detection |
+
+**Architecture:**
+```
+Dagster Assets (orchestration + observability)
+    ├── raw_code_files      → crawl repos
+    ├── code_chunks         → LlamaIndex CodeSplitter
+    ├── clean_chunks        → Presidio PHI scrubbing
+    ├── service_relations   → custom tree-sitter extraction
+    ├── vector_index        → LanceDB
+    └── knowledge_graph     → Graphiti
+```
 
 **What We Build Custom:**
-1. `MultiRepoSource` - coordinates multiple git repos
-2. `ServiceCallExtractor` - AST-based relationship detection
-3. `GraphitiGraphStore` - adapter if we want Graphiti over LlamaIndex KG
+1. `repo_crawler` asset - coordinates multiple git repos (~50 lines)
+2. `service_extractor` asset - AST-based relationship detection (~100 lines)
+3. `phi_scrubber` asset - Presidio wrapper (~50 lines)
 
 ---
 
@@ -34,26 +46,26 @@ Rather than building custom ingestion infrastructure, we use LlamaIndex which pr
 
 ### Track A: Multi-Repo Code Graph RAG (MVP)
 
-| Phase | Deliverable | Build vs Configure | Verification |
-|-------|-------------|-------------------|--------------|
-| 1 | Config & Types | Custom types only | Type checking |
-| 2 | LlamaIndex Pipeline | Configure CodeSplitter + LanceDB | Integration test |
-| 3 | Multi-Repo Source | Custom ~100 lines | Unit tests with fixtures |
-| 4 | Service Call Extractor | Custom ~150 lines | Unit tests with sample code |
-| 5 | Graph Integration | Configure KnowledgeGraphIndex | Integration test |
-| 6 | Hybrid Retrieval | Configure retriever | End-to-end test |
+| Phase | Deliverable | Custom Code | Verification |
+|-------|-------------|-------------|--------------|
+| 1 | Project Setup | Dagster + deps config | `dagster dev` runs |
+| 2 | Repo Crawler Asset | ~50 lines | Unit test with fixture repos |
+| 3 | Code Chunks Asset | ~20 lines (configure CodeSplitter) | Chunks look correct |
+| 4 | Service Extractor Asset | ~100 lines | Unit test with sample code |
+| 5 | Vector Index Asset | ~30 lines (configure LanceDB) | Search returns results |
+| 6 | Graph Asset | ~30 lines (configure Graphiti) | Graph queries work |
+| 7 | Hybrid Retriever | ~50 lines | End-to-end test |
 
-**MVP Deliverable:** Working multi-repo code search with graph-based relationship expansion.
+**MVP Deliverable:** Working multi-repo code search with graph expansion + Dagster UI.
 
-**Lines of Custom Code:** ~400 (down from ~1400)
+**Lines of Custom Code:** ~280 + Dagster asset wiring
 
 ### Track B: Compliance & Conversations (Post-MVP)
 
-| Phase | Deliverable | Build vs Configure | Verification |
-|-------|-------------|-------------------|--------------|
-| 7 | PHI Scrubbing Transform | Custom Presidio wrapper ~100 lines | Unit tests |
-| 8 | Conversation Loader | Custom Slack/transcript reader ~100 lines | Unit tests |
-| 9 | Graphiti Adapter | Custom adapter ~150 lines (optional) | Integration test |
+| Phase | Deliverable | Custom Code | Verification |
+|-------|-------------|-------------|--------------|
+| 8 | PHI Scrubber Asset | ~50 lines Presidio wrapper | PII removed from output |
+| 9 | Conversation Loader Asset | ~80 lines Slack/transcript | Threads parsed correctly |
 
 ---
 
@@ -1451,46 +1463,46 @@ Query (string)
 
 ## Verification Summary
 
-### Track A (MVP) - Using LlamaIndex
+### Track A (MVP) - Dagster + LlamaIndex + Graphiti
 
-| Phase | Custom Lines | What We Configure | Verifiable Offline |
-|-------|--------------|-------------------|-------------------|
-| 1 | ~50 | Types, config | Yes |
-| 2 | ~20 | CodeSplitter, LanceDB | Yes |
-| 3 | ~100 | MultiRepoSource | Yes |
-| 4 | ~150 | ServiceCallExtractor | Yes |
-| 5 | ~50 | KnowledgeGraphIndex | Yes |
-| 6 | ~30 | Hybrid retriever | Yes |
+| Phase | Custom Lines | Dagster Asset | External Dep |
+|-------|--------------|---------------|--------------|
+| 1 | ~0 | - | Dagster |
+| 2 | ~50 | `raw_code_files` | git |
+| 3 | ~20 | `code_chunks` | LlamaIndex |
+| 4 | ~100 | `service_relations` | tree-sitter |
+| 5 | ~30 | `vector_index` | LanceDB |
+| 6 | ~30 | `knowledge_graph` | Graphiti + Neo4j Aura |
+| 7 | ~50 | `retriever` | - |
 
-**MVP Total: ~400 custom lines + LlamaIndex config**
+**MVP Total: ~280 custom lines**
 
 ### Track B (Post-MVP)
 
-| Phase | Custom Lines | What We Build | Verifiable Offline |
-|-------|--------------|---------------|-------------------|
-| 7 | ~100 | Presidio transform | Yes |
-| 8 | ~100 | Conversation loader | Yes |
-| 9 | ~150 | Graphiti adapter | No (needs Neo4j) |
+| Phase | Custom Lines | Dagster Asset | External Dep |
+|-------|--------------|---------------|--------------|
+| 8 | ~50 | `clean_chunks` | Presidio |
+| 9 | ~80 | `conversation_docs` | - |
 
 ---
 
 ## Build Order
 
-### MVP Path (Phases 1-6)
+### MVP Path (Phases 1-7)
 ```
-1. Config & Types     → pip install llama-index + types
-2. LlamaIndex Pipeline → Configure CodeSplitter + LanceDB
-3. Multi-Repo Source   → Custom git coordination
-4. Service Extractor   → AST analysis for relationships
-5. Graph Integration   → KnowledgeGraphIndex setup
-6. Hybrid Retrieval    → Configure retriever, test e2e
+1. Project Setup      → pip install dagster llama-index graphiti-core lancedb
+2. Repo Crawler       → @asset raw_code_files
+3. Code Chunks        → @asset code_chunks (LlamaIndex CodeSplitter)
+4. Service Extractor  → @asset service_relations (custom tree-sitter)
+5. Vector Index       → @asset vector_index (LanceDB)
+6. Knowledge Graph    → @asset knowledge_graph (Graphiti)
+7. Hybrid Retriever   → Query both stores
 ```
 
-**At Phase 6:** Working multi-repo code search with graph expansion.
+**At Phase 7:** `dagster dev` shows full pipeline, search works.
 
-### Post-MVP Path (Phases 7-9)
+### Post-MVP Path (Phases 8-9)
 ```
-7. PHI Scrubbing     → Presidio transform in pipeline
-8. Conversation      → Custom loader for Slack/transcripts
-9. Graphiti          → Swap KnowledgeGraphIndex for Graphiti (optional)
+8. PHI Scrubbing      → Insert clean_chunks asset between chunks and index
+9. Conversations      → Add conversation_docs asset, feeds into graph
 ```
