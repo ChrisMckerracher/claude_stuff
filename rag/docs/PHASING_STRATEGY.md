@@ -71,6 +71,184 @@ Dagster Assets (orchestration + observability)
 
 ---
 
+## Service Extractor Module Breakdown
+
+The service extractor is the largest custom component (~360 lines). Here's the full interface spec:
+
+### File Structure
+```
+rag/extractors/
+├── base.py          # ~30 lines - protocols and types
+├── patterns.py      # ~80 lines - pattern matchers
+├── extractor.py     # ~40 lines - main entry point
+└── languages/
+    ├── python.py    # ~60 lines
+    ├── go.py        # ~50 lines
+    ├── typescript.py # ~50 lines
+    └── csharp.py    # ~50 lines
+```
+
+### `base.py` (~30 lines)
+```python
+from dataclasses import dataclass
+from typing import Protocol, Literal, Iterator
+import tree_sitter
+
+@dataclass
+class ServiceCall:
+    """Detected inter-service communication."""
+    source_file: str
+    target_service: str
+    call_type: Literal["http", "grpc", "queue_publish", "queue_subscribe"]
+    line_number: int
+    confidence: float  # 0.0-1.0, based on pattern certainty
+
+class PatternMatcher(Protocol):
+    """Matches specific call patterns in AST nodes."""
+    def match(self, node: tree_sitter.Node, source: bytes) -> list[ServiceCall]: ...
+
+class LanguageExtractor(Protocol):
+    """Extracts service calls from source code in a specific language."""
+    language: str
+    def extract(self, source: bytes) -> list[ServiceCall]: ...
+    def get_patterns(self) -> list[PatternMatcher]: ...
+```
+
+### `patterns.py` (~80 lines)
+```python
+class HttpCallPattern(PatternMatcher):
+    """Matches HTTP client calls across languages.
+
+    Python: requests.get/post, httpx.get, aiohttp.ClientSession
+    Go: http.Get, http.Post, client.Do
+    TS: fetch(), axios.get/post
+    C#: HttpClient.GetAsync/PostAsync
+    """
+    URL_REGEX = re.compile(r'https?://([^/]+)')
+
+    def match(self, node: tree_sitter.Node, source: bytes) -> list[ServiceCall]:
+        # ~20 lines: check node type, extract URL, infer service name
+        ...
+
+class GrpcCallPattern(PatternMatcher):
+    """Matches gRPC client calls.
+
+    Python: grpc.insecure_channel(), stub.Method()
+    Go: grpc.Dial(), client.Method()
+    """
+    def match(self, node: tree_sitter.Node, source: bytes) -> list[ServiceCall]:
+        # ~20 lines
+        ...
+
+class QueuePublishPattern(PatternMatcher):
+    """Matches message queue publish operations.
+
+    Python: channel.basic_publish(), producer.send()
+    Go: channel.Publish(), producer.Produce()
+    """
+    def match(self, node: tree_sitter.Node, source: bytes) -> list[ServiceCall]:
+        # ~20 lines
+        ...
+
+class QueueSubscribePattern(PatternMatcher):
+    """Matches message queue subscribe operations."""
+    def match(self, node: tree_sitter.Node, source: bytes) -> list[ServiceCall]:
+        # ~15 lines
+        ...
+```
+
+### `extractor.py` (~40 lines)
+```python
+class ServiceExtractor:
+    """Main entry point - delegates to language-specific extractors."""
+
+    LANG_MAP = {".py": "python", ".go": "go", ".ts": "typescript", ".cs": "csharp"}
+
+    def __init__(self):
+        self._extractors: dict[str, LanguageExtractor] = {
+            "python": PythonExtractor(),
+            "go": GoExtractor(),
+            "typescript": TypeScriptExtractor(),
+            "csharp": CSharpExtractor(),
+        }
+
+    def extract_from_file(self, path: str, content: bytes) -> list[ServiceCall]:
+        """Extract all service calls from a source file."""
+        lang = self._detect_language(path)
+        if lang not in self._extractors:
+            return []
+        return self._extractors[lang].extract(content)
+
+    def extract_from_repo(self, repo_path: str) -> Iterator[ServiceCall]:
+        """Extract service calls from all files in a repo."""
+        for file_path, content in walk_repo_files(repo_path):
+            yield from self.extract_from_file(file_path, content)
+
+    def _detect_language(self, path: str) -> str | None:
+        ext = Path(path).suffix
+        return self.LANG_MAP.get(ext)
+```
+
+### `languages/python.py` (~60 lines)
+```python
+import tree_sitter_python
+
+class PythonExtractor(LanguageExtractor):
+    language = "python"
+
+    # AST node types we care about
+    CALL_NODES = {"call", "attribute"}
+
+    def __init__(self):
+        self._parser = tree_sitter.Parser()
+        self._parser.set_language(tree_sitter_python.language())
+        self._patterns = [
+            HttpCallPattern(),
+            GrpcCallPattern(),
+            QueuePublishPattern(),
+            QueueSubscribePattern(),
+        ]
+
+    def extract(self, source: bytes) -> list[ServiceCall]:
+        tree = self._parser.parse(source)
+        calls = []
+        for node in self._walk_calls(tree.root_node):
+            for pattern in self._patterns:
+                calls.extend(pattern.match(node, source))
+        return calls
+
+    def _walk_calls(self, node: tree_sitter.Node) -> Iterator[tree_sitter.Node]:
+        """Yield all call expression nodes."""
+        if node.type in self.CALL_NODES:
+            yield node
+        for child in node.children:
+            yield from self._walk_calls(child)
+
+    def get_patterns(self) -> list[PatternMatcher]:
+        return self._patterns
+```
+
+### `languages/go.py`, `typescript.py`, `csharp.py` (~50 lines each)
+Same structure as Python, different:
+- Parser: `tree_sitter_go`, `tree_sitter_typescript`, `tree_sitter_c_sharp`
+- Node types: Go uses `call_expression`, TS uses `call_expression`, C# uses `invocation_expression`
+- Pattern adjustments for language-specific idioms
+
+### Line Count Summary
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `base.py` | 30 | Protocols, ServiceCall dataclass |
+| `patterns.py` | 80 | 4 pattern matchers |
+| `extractor.py` | 40 | Main entry point, language dispatch |
+| `languages/python.py` | 60 | Python AST walking |
+| `languages/go.py` | 50 | Go AST walking |
+| `languages/typescript.py` | 50 | TypeScript AST walking |
+| `languages/csharp.py` | 50 | C# AST walking |
+| **Total** | **360** | |
+
+---
+
 ## Phase 0: Core Protocols & Types
 
 **Deliverable:** All interfaces, types, and contracts defined. Zero implementation.
