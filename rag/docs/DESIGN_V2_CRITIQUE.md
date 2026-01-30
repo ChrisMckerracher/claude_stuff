@@ -332,57 +332,7 @@ if scrub_errors:
 
 ## Category 3: Control Flow Issues
 
-### 3.1 CRITICAL: No Retry Logic for LLM Errors in Graphiti
-
-**Problem:** `GraphStore.add_episode()` can raise `LLMError` (line 1559). The orchestrator just catches all exceptions:
-
-```python
-try:
-    # ... ingestion ...
-except Exception as e:
-    stats.errors.append(f"{crawl_result.source_uri}: {e}")
-```
-
-LLM rate limits need exponential backoff, not "log and continue".
-
-**Fix:** Add retry decorator pattern:
-
-```python
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
-
-# In graphiti/client.py
-@retry(
-    retry=retry_if_exception_type(LLMError),
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=4, max=60),
-    before_sleep=lambda retry_state: logger.warning(
-        f"LLM call failed, retrying in {retry_state.next_action.sleep}s"
-    )
-)
-async def add_episode(self, text: str, *, source: str, ...) -> list[Entity]:
-    """With automatic retry on rate limits."""
-    ...
-
-# Or show manual pattern for phone coding:
-async def add_episode_with_retry(
-    graph: GraphStore,
-    text: str,
-    source: str,
-    max_retries: int = 3
-) -> list[Entity]:
-    """Retry wrapper for LLM-based extraction."""
-    for attempt in range(max_retries):
-        try:
-            return await graph.add_episode(text, source=source)
-        except LLMError as e:
-            if not e.retryable or attempt == max_retries - 1:
-                raise
-            wait = e.retry_after_seconds or (2 ** attempt)
-            await asyncio.sleep(wait)
-    raise RuntimeError("Unreachable")
-```
-
-### 3.2 HIGH: Dagster Asset Dependencies Don't Show Data Flow
+### 3.1 HIGH: Dagster Asset Dependencies Don't Show Data Flow
 
 **Problem:** The asset dependency graph shows boxes and arrows but not WHAT data flows between them:
 
@@ -414,7 +364,7 @@ route_registry: RouteRegistryOutput    code_chunks: list[RawChunk]
       │  .load() → SQLiteRegistry
 ```
 
-### 3.3 HIGH: MockGraphStore Episode Extraction Is Completely Different From Production
+### 3.2 MEDIUM: MockGraphStore Episode Extraction Is Different From Production
 
 **Problem (lines 2295-2343):** MockGraphStore uses regex patterns, Graphiti uses LLM extraction. The parity tests only check "did we get entities", not "are they the same entities".
 
@@ -456,7 +406,7 @@ class MockGraphStore:
             ...
 ```
 
-### 3.4 MEDIUM: Chunking → Scrubbing → Embedding Pipeline Not Shown As One Flow
+### 3.3 MEDIUM: Chunking → Scrubbing → Embedding Pipeline Not Shown As One Flow
 
 **Problem:** The individual components are well-defined but how they compose isn't crystal clear. You have:
 
@@ -842,16 +792,15 @@ DATA_DIR.mkdir(exist_ok=True)
 
 6. Add explicit `__init__.py` exports
 7. Annotate Dagster asset graph with types
-8. Add retry logic for LLM calls
-9. Centralize ALL config (embedding model, DB paths)
-10. Add phase completion criteria with git tags
+8. Centralize ALL config (embedding model, DB paths)
+9. Add phase completion criteria with git tags
 
 ### Nice to Have (Improves experience)
 
-11. Add complexity ratings to phases
-12. Add type stubs for external deps inline
-13. Add composition diagram showing full pipeline
-14. Document mock vs production behavioral differences
+10. Add complexity ratings to phases
+11. Add type stubs for external deps inline
+12. Add composition diagram showing full pipeline
+13. Document mock vs production behavioral differences
 
 ---
 

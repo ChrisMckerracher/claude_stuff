@@ -230,8 +230,29 @@ class HttpCallPattern(PatternMatcher):
     PATH_REGEX = re.compile(r'https?://[^/]+(/[^"\')\s]+)')
 
     def match(self, node: tree_sitter.Node, source: bytes) -> list[ServiceCall]:
-        # ~30 lines: check node type, extract URL, infer service name
-        ...
+        """Extract HTTP calls from an AST node.
+
+        Input:
+            node: tree-sitter Node of type 'call' or 'call_expression'
+            source: Full source file bytes (for extracting text via byte offsets)
+
+        Output:
+            List of ServiceCall objects. Empty if node isn't an HTTP call.
+
+        Algorithm:
+            1. Check node.type is a call expression (bail early if not)
+            2. Get call text via source[node.start_byte:node.end_byte]
+            3. Find URL in string literal children using URL_REGEX
+            4. Extract service name from URL host
+            5. Extract path from URL
+            6. Determine confidence: HIGH if literal URL, MEDIUM if f-string, LOW if variable
+            7. Infer HTTP method from function name (get/post/put/delete/patch)
+
+        Edge Cases:
+            - Returns [] if URL is in docstring/comment (check parent node types)
+            - Returns [] if URL has no http:// prefix
+            - For f-strings, extract what we can, mark confidence MEDIUM
+        """
 
 class GrpcCallPattern(PatternMatcher):
     """Matches gRPC client calls.
@@ -259,8 +280,24 @@ class GrpcCallPattern(PatternMatcher):
         grpc.UnaryUnaryClientInterceptor   # Type, not call
     """
     def match(self, node: tree_sitter.Node, source: bytes) -> list[ServiceCall]:
-        # ~25 lines
-        ...
+        """Extract gRPC channel/stub calls from an AST node.
+
+        Input:
+            node: tree-sitter call node
+            source: Full source bytes
+
+        Output:
+            List of ServiceCall with call_type="grpc". Empty if not gRPC.
+
+        Algorithm:
+            1. Check if call is grpc.insecure_channel() or grpc.Dial()
+            2. Extract target from first string argument (e.g., "user-service:50051")
+            3. Parse service name by stripping port
+            4. For stub calls, track channel variable to resolve target
+
+        Note: Stub method calls (stub.GetUser) require tracking which channel
+        the stub was created with. For MVP, just detect channel creation.
+        """
 
 class QueuePublishPattern(PatternMatcher):
     """Matches message queue publish operations.
@@ -288,8 +325,22 @@ class QueuePublishPattern(PatternMatcher):
         consumer.subscribe(['user-events'])         # Subscribe, not publish
     """
     def match(self, node: tree_sitter.Node, source: bytes) -> list[ServiceCall]:
-        # ~25 lines
-        ...
+        """Extract queue publish operations from an AST node.
+
+        Input:
+            node: tree-sitter call node
+            source: Full source bytes
+
+        Output:
+            List of ServiceCall with call_type="queue_publish". Empty if not publish.
+
+        Algorithm:
+            1. Check if call matches publish patterns:
+               - Python: basic_publish, producer.send, publish
+               - Go: ch.Publish, producer.Produce
+            2. Extract queue/topic name from routing_key or first string arg
+            3. Return ServiceCall with target_service = queue name
+        """
 
 class QueueSubscribePattern(PatternMatcher):
     """Matches message queue subscribe operations.
@@ -309,8 +360,23 @@ class QueueSubscribePattern(PatternMatcher):
         → ServiceCall(target="user-events", call_type="queue_subscribe")
     """
     def match(self, node: tree_sitter.Node, source: bytes) -> list[ServiceCall]:
-        # ~20 lines
-        ...
+        """Extract queue subscribe operations from an AST node.
+
+        Input:
+            node: tree-sitter call node
+            source: Full source bytes
+
+        Output:
+            List of ServiceCall with call_type="queue_subscribe".
+            May return multiple calls for multi-topic subscribes.
+
+        Algorithm:
+            1. Check if call matches subscribe patterns:
+               - Python: basic_consume, consumer.subscribe
+               - Go: ch.Consume
+            2. Extract queue/topic names (may be a list)
+            3. Return one ServiceCall per topic
+        """
 ```
 
 ### `extractor.py` (~40 lines)
@@ -1320,7 +1386,10 @@ class ChunkID:
 
     @staticmethod
     def from_content(source_uri: str, start: int, end: int) -> "ChunkID":
-        ...
+        """Create ChunkID from source location.
+
+        Returns: ChunkID(SHA256(f"{source_uri}:{start}:{end}"))
+        """
 
 @dataclass
 class RawChunk:
@@ -1860,12 +1929,26 @@ class ASTChunker:
                 yield from self._split_large_node(node, content, source_uri, language)
 
     def _walk_top_level(self, node: Node) -> Iterator[Node]:
-        """Yield function/class/method nodes."""
-        ...
+        """Yield function/class/method nodes.
+
+        Walks AST recursively, yielding nodes where node.type in:
+        - Python: function_definition, class_definition
+        - Go: function_declaration, method_declaration
+        - TS: function_declaration, class_declaration, method_definition
+        - C#: method_declaration, class_declaration
+        """
 
     def _make_chunk(self, node: Node, text: str, uri: str, lang: str) -> RawChunk:
-        """Create chunk with proper metadata."""
-        ...
+        """Create RawChunk from AST node.
+
+        Returns RawChunk with:
+        - id: ChunkID.from_content(uri, node.start_byte, node.end_byte)
+        - text: The chunk text
+        - source_uri: uri
+        - corpus_type: CODE_LOGIC (or CODE_TEST if "test" in uri)
+        - byte_range: (node.start_byte, node.end_byte)
+        - metadata: {language, symbol_name, symbol_kind, context_prefix}
+        """
 ```
 
 **Tests:**
@@ -2433,9 +2516,15 @@ class GraphitiStore:
         self._graphiti.llm_client = llm_client
 
     async def add_entity(self, entity: Entity) -> EntityID:
-        """Delegate to Graphiti."""
-        # Convert our Entity to Graphiti's format
-        ...
+        """Delegate to Graphiti.
+
+        Converts our Entity to Graphiti's EntityNode format:
+        - entity.type.value → node label
+        - entity.name → node name
+        - entity.properties → node attributes
+
+        Returns EntityID matching our Entity.id format.
+        """
 
     async def add_episode(
         self,
