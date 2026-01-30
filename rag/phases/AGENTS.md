@@ -23,6 +23,57 @@ rag/phases/
 └── phase8/          # Graphiti Integration (Post-MVP)
 ```
 
+## Environment Management
+
+**We strictly use `uv` for all Python package management.** Do not use `pip` directly.
+
+### Installing Dependencies
+
+```bash
+# Add a new dependency
+uv add transformers
+
+# Add a dev dependency
+uv add --dev pytest
+
+# Install all dependencies from pyproject.toml
+uv sync
+
+# Run a command in the virtual environment
+uv run python -c "from rag.core.types import RawChunk; print('OK')"
+
+# Run pytest
+uv run pytest tests/
+```
+
+### Why uv?
+
+- Faster than pip (10-100x)
+- Deterministic lockfile (`uv.lock`)
+- Handles virtual environments automatically
+- Compatible with `pyproject.toml`
+
+### Common Commands
+
+| Task | Command |
+|------|---------|
+| Add package | `uv add <package>` |
+| Add dev package | `uv add --dev <package>` |
+| Remove package | `uv remove <package>` |
+| Sync environment | `uv sync` |
+| Run script | `uv run python script.py` |
+| Run pytest | `uv run pytest` |
+| Show installed | `uv pip list` |
+
+### Before Starting a Phase
+
+Always ensure dependencies are installed:
+
+```bash
+uv sync
+uv run python -c "import rag; print('Environment ready')"
+```
+
 ## Working on a Phase
 
 ### Step 1: Read the Phase Overview
@@ -149,20 +200,20 @@ async def test_insert_and_retrieve_single_chunk(lance_store):
 
 ```bash
 # Run specific phase tests
-pytest tests/test_phase3/ -v
+uv run pytest tests/test_phase3/ -v
 
 # Run with specific marker
-pytest -m "not integration" tests/
+uv run pytest -m "not integration" tests/
 
 # Run quick check
-python -c "..." # from task.md
+uv run python -c "..." # from task.md
 ```
 
 ## Phase-Specific Guidelines
 
 ### Phase 0: Core Types
 - No implementation code, only type definitions
-- Use `mypy --strict` to verify
+- Use `uv run mypy --strict` to verify
 - Focus on clear docstrings
 
 ### Phase 1-3: Foundation
@@ -203,10 +254,10 @@ Use checkpoint tests to verify state after breaks:
 
 ```bash
 # Verify Python extraction works
-python -m rag.extractors --checkpoint python_http
+uv run python -m rag.extractors --checkpoint python_http
 
 # Verify registry works
-python -m rag.extractors --checkpoint registry_crud
+uv run python -m rag.extractors --checkpoint registry_crud
 ```
 
 ### File Structure
