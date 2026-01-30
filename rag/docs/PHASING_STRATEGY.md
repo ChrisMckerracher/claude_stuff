@@ -37,7 +37,9 @@ Dagster Assets (orchestration + observability)
 
 **What We Build Custom:**
 1. `repo_crawler` asset - coordinates multiple git repos (~50 lines)
-2. `service_extractor` asset - AST-based relationship detection (~100 lines)
+2. `service_extractor` asset - AST-based relationship detection (~350 lines)
+   - Multi-language patterns: Python, Go, TypeScript, C#
+   - HTTP client detection, gRPC calls, queue publish/subscribe
 3. `phi_scrubber` asset - Presidio wrapper (~50 lines)
 
 ---
@@ -51,14 +53,14 @@ Dagster Assets (orchestration + observability)
 | 1 | Project Setup | Dagster + deps config | `dagster dev` runs |
 | 2 | Repo Crawler Asset | ~50 lines | Unit test with fixture repos |
 | 3 | Code Chunks Asset | ~20 lines (configure CodeSplitter) | Chunks look correct |
-| 4 | Service Extractor Asset | ~100 lines | Unit test with sample code |
+| 4 | Service Extractor Asset | ~350 lines (multi-lang AST) | Unit test per language |
 | 5 | Vector Index Asset | ~30 lines (configure LanceDB) | Search returns results |
-| 6 | Graph Asset | ~30 lines (configure Graphiti) | Graph queries work |
-| 7 | Hybrid Retriever | ~50 lines | End-to-end test |
+| 6 | Graph Asset | ~50 lines (configure Graphiti) | Graph queries work |
+| 7 | Hybrid Retriever | ~100 lines | End-to-end test |
 
 **MVP Deliverable:** Working multi-repo code search with graph expansion + Dagster UI.
 
-**Lines of Custom Code:** ~280 + Dagster asset wiring
+**Lines of Custom Code:** ~600 (honest estimate)
 
 ### Track B: Compliance & Conversations (Post-MVP)
 
@@ -1470,12 +1472,12 @@ Query (string)
 | 1 | ~0 | - | Dagster |
 | 2 | ~50 | `raw_code_files` | git |
 | 3 | ~20 | `code_chunks` | LlamaIndex |
-| 4 | ~100 | `service_relations` | tree-sitter |
+| 4 | ~350 | `service_relations` | tree-sitter (multi-lang) |
 | 5 | ~30 | `vector_index` | LanceDB |
-| 6 | ~30 | `knowledge_graph` | Graphiti + Neo4j Aura |
-| 7 | ~50 | `retriever` | - |
+| 6 | ~50 | `knowledge_graph` | Graphiti + Neo4j Aura |
+| 7 | ~100 | `retriever` | - |
 
-**MVP Total: ~280 custom lines**
+**MVP Total: ~600 custom lines**
 
 ### Track B (Post-MVP)
 
