@@ -6,3 +6,5 @@ plugin/lib/dist/
 .test-analysis/
 __pycache__/
 .mypy_cache/
+*.egg-info/
+.venv/
