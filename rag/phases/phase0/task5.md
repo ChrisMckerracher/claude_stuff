@@ -1,6 +1,6 @@
 # Task 0.5: Define Error Types
 
-**Status:** [ ] Not Started  |  [ ] In Progress  |  [ ] Complete
+**Status:** [ ] Not Started  |  [ ] In Progress  |  [x] Complete
 
 ## Objective
 
@@ -185,11 +185,11 @@ class EmbeddingError(RAGError):
 
 ## Acceptance Criteria
 
-- [ ] All error types defined with appropriate attributes
-- [ ] RetryPolicy class from config.py can use .retryable attribute
-- [ ] Error messages are human-readable and include context
-- [ ] Type checker passes with all error types
-- [ ] Each error type documents when it's retryable
+- [x] All error types defined with appropriate attributes
+- [x] RetryPolicy class from config.py can use .retryable attribute
+- [x] Error messages are human-readable and include context
+- [x] Type checker passes with all error types
+- [x] Each error type documents when it's retryable
 
 ## Dependencies
 

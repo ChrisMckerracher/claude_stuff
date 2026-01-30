@@ -1,6 +1,6 @@
 # Task 0.1: Define Core Data Types
 
-**Status:** [ ] Not Started  |  [ ] In Progress  |  [ ] Complete
+**Status:** [ ] Not Started  |  [ ] In Progress  |  [x] Complete
 
 ## Objective
 
@@ -97,11 +97,11 @@ class ScrubAction:
 
 ## Acceptance Criteria
 
-- [ ] All dataclasses defined with type hints
-- [ ] ChunkID is frozen (immutable)
-- [ ] ChunkID.from_content() uses SHA256
-- [ ] CorpusType enum covers all corpus types from design
-- [ ] Type checker (mypy/pyright) passes with strict mode
+- [x] All dataclasses defined with type hints
+- [x] ChunkID is frozen (immutable)
+- [x] ChunkID.from_content() uses SHA256
+- [x] CorpusType enum covers all corpus types from design
+- [x] Type checker (mypy/pyright) passes with strict mode
 
 ## Dependencies
 
