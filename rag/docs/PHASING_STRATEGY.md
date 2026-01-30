@@ -18,17 +18,29 @@
 
 ## Phase Overview
 
+### Track A: Multi-Repo Code Graph RAG (MVP)
+
 | Phase | Deliverable | External Deps | Verification Method |
 |-------|-------------|---------------|---------------------|
-| 0 | Core Protocols & Types | None | Type checking, interface review |
-| 1 | Chunking Pipeline | tree-sitter (local) | Unit tests with sample files |
-| 2 | PHI Scrubbing | Presidio (local) | Unit tests with synthetic PII |
-| 3 | LanceDB Store | LanceDB (embedded) | Integration tests, local |
-| 4 | Graph Abstraction | None (mocks) | Interface tests, contract verification |
-| 5 | Retrieval Layer | None (uses mocks) | Integration tests with mocks |
-| 6 | Crawlers | File system only | Unit tests with fixtures |
-| 7 | Orchestrator | None (composition) | End-to-end with mocks |
-| 8 | Graphiti Integration | Neo4j + LLM | Real integration tests |
+| 1 | Core Protocols & Types | None | Type checking, interface review |
+| 2 | Code Chunking (AST) | tree-sitter (local) | Unit tests with sample files |
+| 3 | LanceDB + Embedder | LanceDB (embedded) | Integration tests, local |
+| 4 | Graph Abstraction + Mock | None (mocks) | Interface tests, contract verification |
+| 5 | Code Crawler (multi-repo) | git (local) | Unit tests with fixtures |
+| 6 | Retrieval Layer | None (uses mocks) | Integration tests with mocks |
+| 7 | Code Orchestrator | None (composition) | End-to-end with mocks |
+
+**MVP Deliverable:** Working multi-repo code search with graph-based relationship expansion.
+
+### Track B: Compliance & Conversations (Post-MVP)
+
+| Phase | Deliverable | External Deps | Verification Method |
+|-------|-------------|---------------|---------------------|
+| 8 | PHI Scrubbing | Presidio (local) | Unit tests with synthetic PII |
+| 9 | MD + Thread Chunkers | None | Unit tests |
+| 10 | Docs + Convo Crawlers | File system only | Unit tests with fixtures |
+| 11 | Full Orchestrator | None | End-to-end with scrubbing |
+| 12 | Graphiti Integration | Neo4j + LLM | Real integration tests |
 
 ---
 
@@ -1426,32 +1438,52 @@ Query (string)
 
 ## Verification Summary
 
+### Track A (MVP)
+
 | Phase | Lines | Tests | External Deps | Verifiable Offline |
 |-------|-------|-------|---------------|-------------------|
-| 0 | ~200 | Type check only | None | Yes |
-| 1 | ~400 | ~20 unit tests | tree-sitter | Yes |
-| 2 | ~150 | ~10 unit tests | Presidio | Yes |
+| 1 | ~200 | Type check only | None | Yes |
+| 2 | ~250 | ~15 unit tests | tree-sitter | Yes |
 | 3 | ~200 | ~15 integration | LanceDB | Yes |
 | 4 | ~300 | ~25 unit tests | None | Yes |
-| 5 | ~150 | ~10 integration | None | Yes |
-| 6 | ~200 | ~15 unit tests | None | Yes |
+| 5 | ~150 | ~10 unit tests | git | Yes |
+| 6 | ~150 | ~10 integration | None | Yes |
 | 7 | ~150 | ~10 integration | None | Yes |
-| 8 | ~100 | ~5 integration | Neo4j + LLM | No |
 
-**Total: ~1850 lines, ~110 tests, 7/8 phases fully offline verifiable**
+**MVP Total: ~1400 lines, ~85 tests, fully offline verifiable**
+
+### Track B (Post-MVP)
+
+| Phase | Lines | Tests | External Deps | Verifiable Offline |
+|-------|-------|-------|---------------|-------------------|
+| 8 | ~150 | ~10 unit tests | Presidio | Yes |
+| 9 | ~150 | ~10 unit tests | None | Yes |
+| 10 | ~100 | ~10 unit tests | None | Yes |
+| 11 | ~100 | ~5 integration | None | Yes |
+| 12 | ~100 | ~5 integration | Neo4j + LLM | No |
 
 ---
 
-## Recommended Order for Vibe Coding
+## Build Order
 
-1. **Phase 0** - Get interfaces right first. Review them multiple times.
-2. **Phase 4** - MockGraphStore lets you test everything else.
-3. **Phase 1** - Chunking is foundational and testable.
-4. **Phase 3** - LanceDB is embedded, easy to validate.
-5. **Phase 2** - PHI scrubbing can be tested with synthetic data.
-6. **Phase 5** - Retrieval works with mocks now.
-7. **Phase 6** - Crawlers are straightforward.
-8. **Phase 7** - Tie it together, validate end-to-end with mocks.
-9. **Phase 8** - Finally, plug in real Graphiti when you can test it.
+### MVP Path (Phases 1-7)
+```
+1. Core Protocols    → Defines all interfaces
+2. Code Chunking     → AST-based, tree-sitter
+3. LanceDB + Embed   → Vector storage works
+4. Graph Mock        → Can test graph logic without Neo4j
+5. Code Crawler      → Multi-repo ingestion
+6. Retrieval         → Hybrid search works
+7. Code Orchestrator → End-to-end code RAG
+```
 
-This order maximizes confidence before touching external dependencies.
+**At Phase 7:** You have working multi-repo code search with graph expansion.
+
+### Post-MVP Path (Phases 8-12)
+```
+8.  PHI Scrubbing    → Compliance layer
+9.  MD/Thread Chunk  → Non-code content
+10. Docs/Convo Crawl → Additional sources
+11. Full Orchestrator → Scrubbing integrated
+12. Graphiti         → Real graph DB
+```
