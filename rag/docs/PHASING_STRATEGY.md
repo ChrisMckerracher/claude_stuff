@@ -14,33 +14,46 @@
 - Mock implementations for offline verification
 - Control flow diagrams for each module
 
+**Framework Decision: LlamaIndex as Backbone**
+
+Rather than building custom ingestion infrastructure, we use LlamaIndex which provides:
+- `IngestionPipeline` - orchestration we don't need to build
+- `CodeSplitter` - tree-sitter AST chunking built-in
+- `SimpleDirectoryReader` - file crawling with 160+ format support
+- `llama-index-vector-stores-lancedb` - LanceDB integration
+- `KnowledgeGraphIndex` - graph construction (alternative to Graphiti)
+
+**What We Build Custom:**
+1. `MultiRepoSource` - coordinates multiple git repos
+2. `ServiceCallExtractor` - AST-based relationship detection
+3. `GraphitiGraphStore` - adapter if we want Graphiti over LlamaIndex KG
+
 ---
 
 ## Phase Overview
 
 ### Track A: Multi-Repo Code Graph RAG (MVP)
 
-| Phase | Deliverable | External Deps | Verification Method |
-|-------|-------------|---------------|---------------------|
-| 1 | Core Protocols & Types | None | Type checking, interface review |
-| 2 | Code Chunking (AST) | tree-sitter (local) | Unit tests with sample files |
-| 3 | LanceDB + Embedder | LanceDB (embedded) | Integration tests, local |
-| 4 | Graph Abstraction + Mock | None (mocks) | Interface tests, contract verification |
-| 5 | Code Crawler (multi-repo) | git (local) | Unit tests with fixtures |
-| 6 | Retrieval Layer | None (uses mocks) | Integration tests with mocks |
-| 7 | Code Orchestrator | None (composition) | End-to-end with mocks |
+| Phase | Deliverable | Build vs Configure | Verification |
+|-------|-------------|-------------------|--------------|
+| 1 | Config & Types | Custom types only | Type checking |
+| 2 | LlamaIndex Pipeline | Configure CodeSplitter + LanceDB | Integration test |
+| 3 | Multi-Repo Source | Custom ~100 lines | Unit tests with fixtures |
+| 4 | Service Call Extractor | Custom ~150 lines | Unit tests with sample code |
+| 5 | Graph Integration | Configure KnowledgeGraphIndex | Integration test |
+| 6 | Hybrid Retrieval | Configure retriever | End-to-end test |
 
 **MVP Deliverable:** Working multi-repo code search with graph-based relationship expansion.
 
+**Lines of Custom Code:** ~400 (down from ~1400)
+
 ### Track B: Compliance & Conversations (Post-MVP)
 
-| Phase | Deliverable | External Deps | Verification Method |
-|-------|-------------|---------------|---------------------|
-| 8 | PHI Scrubbing | Presidio (local) | Unit tests with synthetic PII |
-| 9 | MD + Thread Chunkers | None | Unit tests |
-| 10 | Docs + Convo Crawlers | File system only | Unit tests with fixtures |
-| 11 | Full Orchestrator | None | End-to-end with scrubbing |
-| 12 | Graphiti Integration | Neo4j + LLM | Real integration tests |
+| Phase | Deliverable | Build vs Configure | Verification |
+|-------|-------------|-------------------|--------------|
+| 7 | PHI Scrubbing Transform | Custom Presidio wrapper ~100 lines | Unit tests |
+| 8 | Conversation Loader | Custom Slack/transcript reader ~100 lines | Unit tests |
+| 9 | Graphiti Adapter | Custom adapter ~150 lines (optional) | Integration test |
 
 ---
 
@@ -1438,52 +1451,46 @@ Query (string)
 
 ## Verification Summary
 
-### Track A (MVP)
+### Track A (MVP) - Using LlamaIndex
 
-| Phase | Lines | Tests | External Deps | Verifiable Offline |
-|-------|-------|-------|---------------|-------------------|
-| 1 | ~200 | Type check only | None | Yes |
-| 2 | ~250 | ~15 unit tests | tree-sitter | Yes |
-| 3 | ~200 | ~15 integration | LanceDB | Yes |
-| 4 | ~300 | ~25 unit tests | None | Yes |
-| 5 | ~150 | ~10 unit tests | git | Yes |
-| 6 | ~150 | ~10 integration | None | Yes |
-| 7 | ~150 | ~10 integration | None | Yes |
+| Phase | Custom Lines | What We Configure | Verifiable Offline |
+|-------|--------------|-------------------|-------------------|
+| 1 | ~50 | Types, config | Yes |
+| 2 | ~20 | CodeSplitter, LanceDB | Yes |
+| 3 | ~100 | MultiRepoSource | Yes |
+| 4 | ~150 | ServiceCallExtractor | Yes |
+| 5 | ~50 | KnowledgeGraphIndex | Yes |
+| 6 | ~30 | Hybrid retriever | Yes |
 
-**MVP Total: ~1400 lines, ~85 tests, fully offline verifiable**
+**MVP Total: ~400 custom lines + LlamaIndex config**
 
 ### Track B (Post-MVP)
 
-| Phase | Lines | Tests | External Deps | Verifiable Offline |
-|-------|-------|-------|---------------|-------------------|
-| 8 | ~150 | ~10 unit tests | Presidio | Yes |
-| 9 | ~150 | ~10 unit tests | None | Yes |
-| 10 | ~100 | ~10 unit tests | None | Yes |
-| 11 | ~100 | ~5 integration | None | Yes |
-| 12 | ~100 | ~5 integration | Neo4j + LLM | No |
+| Phase | Custom Lines | What We Build | Verifiable Offline |
+|-------|--------------|---------------|-------------------|
+| 7 | ~100 | Presidio transform | Yes |
+| 8 | ~100 | Conversation loader | Yes |
+| 9 | ~150 | Graphiti adapter | No (needs Neo4j) |
 
 ---
 
 ## Build Order
 
-### MVP Path (Phases 1-7)
+### MVP Path (Phases 1-6)
 ```
-1. Core Protocols    → Defines all interfaces
-2. Code Chunking     → AST-based, tree-sitter
-3. LanceDB + Embed   → Vector storage works
-4. Graph Mock        → Can test graph logic without Neo4j
-5. Code Crawler      → Multi-repo ingestion
-6. Retrieval         → Hybrid search works
-7. Code Orchestrator → End-to-end code RAG
+1. Config & Types     → pip install llama-index + types
+2. LlamaIndex Pipeline → Configure CodeSplitter + LanceDB
+3. Multi-Repo Source   → Custom git coordination
+4. Service Extractor   → AST analysis for relationships
+5. Graph Integration   → KnowledgeGraphIndex setup
+6. Hybrid Retrieval    → Configure retriever, test e2e
 ```
 
-**At Phase 7:** You have working multi-repo code search with graph expansion.
+**At Phase 6:** Working multi-repo code search with graph expansion.
 
-### Post-MVP Path (Phases 8-12)
+### Post-MVP Path (Phases 7-9)
 ```
-8.  PHI Scrubbing    → Compliance layer
-9.  MD/Thread Chunk  → Non-code content
-10. Docs/Convo Crawl → Additional sources
-11. Full Orchestrator → Scrubbing integrated
-12. Graphiti         → Real graph DB
+7. PHI Scrubbing     → Presidio transform in pipeline
+8. Conversation      → Custom loader for Slack/transcripts
+9. Graphiti          → Swap KnowledgeGraphIndex for Graphiti (optional)
 ```
