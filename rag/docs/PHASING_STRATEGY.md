@@ -37,9 +37,10 @@ Dagster Assets (orchestration + observability)
 
 **What We Build Custom:**
 1. `repo_crawler` asset - coordinates multiple git repos (~50 lines)
-2. `service_extractor` asset - AST-based relationship detection (~350 lines)
-   - Multi-language patterns: Python, Go, TypeScript, C#
-   - HTTP client detection, gRPC calls, queue publish/subscribe
+2. `service_extractor` asset - AST-based call detection + route linking (~650 lines)
+   - Call detection: HTTP clients, gRPC, queues across Python/Go/TS/C#
+   - Route extraction: Flask, FastAPI, Gin, Express, ASP.NET
+   - Linker: matches calls to handler files by path pattern
 3. `phi_scrubber` asset - Presidio wrapper (~50 lines)
 
 ---
@@ -53,14 +54,14 @@ Dagster Assets (orchestration + observability)
 | 1 | Project Setup | Dagster + deps config | `dagster dev` runs |
 | 2 | Repo Crawler Asset | ~50 lines | Unit test with fixture repos |
 | 3 | Code Chunks Asset | ~20 lines (configure CodeSplitter) | Chunks look correct |
-| 4 | Service Extractor Asset | ~350 lines (multi-lang AST) | Unit test per language |
+| 4 | Service Extractor + Route Linker | ~650 lines (extraction + linking) | Unit test per language + framework |
 | 5 | Vector Index Asset | ~30 lines (configure LanceDB) | Search returns results |
 | 6 | Graph Asset | ~50 lines (configure Graphiti) | Graph queries work |
 | 7 | Hybrid Retriever | ~100 lines | End-to-end test |
 
 **MVP Deliverable:** Working multi-repo code search with graph expansion + Dagster UI.
 
-**Lines of Custom Code:** ~600 (honest estimate)
+**Lines of Custom Code:** ~900 (with route linking)
 
 ### Track B: Compliance & Conversations (Post-MVP)
 
@@ -246,6 +247,223 @@ Same structure as Python, different:
 | `languages/typescript.py` | 50 | TypeScript AST walking |
 | `languages/csharp.py` | 50 | C# AST walking |
 | **Total** | **360** | |
+
+---
+
+## Route Extractor & Call Linking
+
+To link `auth-service calls user-service` to the actual handler file, we need:
+1. **RouteExtractor** - scans each service for route definitions
+2. **Linker** - matches calls to routes by path pattern
+
+### File Structure
+```
+rag/extractors/
+├── ...existing files...
+├── routes.py           # ~80 lines - route extraction
+├── linker.py           # ~60 lines - call-to-handler linking
+└── frameworks/
+    ├── flask.py        # ~30 lines
+    ├── fastapi.py      # ~30 lines
+    ├── gin.py          # ~30 lines
+    ├── express.py      # ~30 lines
+    └── aspnet.py       # ~30 lines
+```
+
+### `routes.py` (~80 lines)
+```python
+@dataclass
+class RouteDefinition:
+    """A route defined in a service."""
+    service: str
+    method: Literal["GET", "POST", "PUT", "DELETE", "PATCH"]
+    path: str                    # /api/users/{user_id}
+    handler_file: str            # src/controllers/user_controller.py
+    handler_function: str        # get_user
+    line_number: int
+
+class FrameworkPattern(Protocol):
+    """Extracts routes from a specific web framework."""
+    def extract(self, node: tree_sitter.Node, source: bytes, file_path: str) -> list[RouteDefinition]: ...
+
+class RouteExtractor:
+    """Scans repos for route definitions across frameworks."""
+
+    def __init__(self):
+        self._patterns = {
+            "python": [FlaskPattern(), FastAPIPattern()],
+            "go": [GinPattern(), ChiPattern()],
+            "typescript": [ExpressPattern(), NestPattern()],
+            "csharp": [AspNetPattern()],
+        }
+
+    def extract_from_repo(self, repo_path: str, service_name: str) -> list[RouteDefinition]:
+        """Scan all files in repo for route definitions."""
+        routes = []
+        for file_path, content, lang in walk_repo_files(repo_path):
+            for pattern in self._patterns.get(lang, []):
+                tree = parse(content, lang)
+                routes.extend(pattern.extract(tree.root_node, content, file_path))
+
+        # Attach service name to all routes
+        for route in routes:
+            route.service = service_name
+
+        return routes
+```
+
+### `frameworks/fastapi.py` (~30 lines)
+```python
+class FastAPIPattern(FrameworkPattern):
+    """Extracts routes from FastAPI decorators.
+
+    Matches:
+        @router.get("/api/users/{user_id}")
+        @app.post("/api/users")
+    """
+
+    METHODS = {"get", "post", "put", "delete", "patch"}
+
+    def extract(self, node: Node, source: bytes, file_path: str) -> list[RouteDefinition]:
+        routes = []
+
+        for decorator in self._find_decorators(node):
+            method = self._get_method(decorator)  # "get", "post", etc.
+            path = self._get_path_arg(decorator)   # "/api/users/{user_id}"
+            func = self._get_decorated_function(decorator)
+
+            if method and path and func:
+                routes.append(RouteDefinition(
+                    service="",  # Filled in by RouteExtractor
+                    method=method.upper(),
+                    path=path,
+                    handler_file=file_path,
+                    handler_function=func.name,
+                    line_number=func.start_point[0],
+                ))
+
+        return routes
+```
+
+### `linker.py` (~60 lines)
+```python
+@dataclass
+class ServiceRelation:
+    """A resolved call from one file to another."""
+    source_file: str
+    source_line: int
+    target_file: str
+    target_function: str
+    target_line: int
+    relation_type: Literal["HTTP_CALL", "GRPC_CALL", "QUEUE_PUBLISH"]
+    route_path: str | None  # For HTTP calls
+
+class CallLinker:
+    """Links extracted calls to their handler definitions."""
+
+    def __init__(self, route_registry: dict[str, list[RouteDefinition]]):
+        self._routes = route_registry  # service_name → routes
+
+    def link(self, call: ServiceCall) -> ServiceRelation | None:
+        """Match a call to its handler."""
+        routes = self._routes.get(call.target_service, [])
+
+        for route in routes:
+            if self._matches(call, route):
+                return ServiceRelation(
+                    source_file=call.source_file,
+                    source_line=call.line_number,
+                    target_file=f"{call.target_service}/{route.handler_file}",
+                    target_function=route.handler_function,
+                    target_line=route.line_number,
+                    relation_type="HTTP_CALL",
+                    route_path=route.path,
+                )
+
+        # No match found - still record the call but without target file
+        return ServiceRelation(
+            source_file=call.source_file,
+            source_line=call.line_number,
+            target_file=f"{call.target_service}/<unknown>",
+            target_function="<unknown>",
+            target_line=0,
+            relation_type="HTTP_CALL",
+            route_path=call.url_path,
+        )
+
+    def _matches(self, call: ServiceCall, route: RouteDefinition) -> bool:
+        """Check if call matches route pattern."""
+        if call.method and call.method != route.method:
+            return False
+
+        # Convert /api/users/{user_id} → regex /api/users/[^/]+
+        pattern = re.sub(r'\{[^}]+\}', r'[^/]+', route.path)
+        return re.match(f"^{pattern}$", call.url_path) is not None
+```
+
+### Example Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│ 1. RouteExtractor scans user-service                                │
+├─────────────────────────────────────────────────────────────────────┤
+│ @router.get("/api/users/{user_id}")                                 │
+│ async def get_user(user_id):                                        │
+│                                                                     │
+│ → RouteDefinition(service="user-service",                           │
+│                   method="GET",                                     │
+│                   path="/api/users/{user_id}",                      │
+│                   handler_file="src/controllers/user_controller.py",│
+│                   handler_function="get_user")                      │
+└─────────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│ 2. ServiceExtractor scans auth-service                              │
+├─────────────────────────────────────────────────────────────────────┤
+│ resp = httpx.get(f"http://user-service/api/users/{user_id}")        │
+│                                                                     │
+│ → ServiceCall(source_file="auth-service/src/auth/login.py",         │
+│               target_service="user-service",                        │
+│               method="GET",                                         │
+│               url_path="/api/users/{user_id}")                      │
+└─────────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│ 3. CallLinker matches call to route                                 │
+├─────────────────────────────────────────────────────────────────────┤
+│ → ServiceRelation(                                                  │
+│       source_file="auth-service/src/auth/login.py",                 │
+│       target_file="user-service/src/controllers/user_controller.py",│
+│       target_function="get_user",                                   │
+│       relation_type="HTTP_CALL",                                    │
+│       route_path="/api/users/{user_id}")                            │
+└─────────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│ 4. Graph Edge Created                                               │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  (auth-service/login.py) ──HTTP_CALL──> (user-service/user_ctrl.py) │
+│                               │                                     │
+│                    GET /api/users/{user_id}                         │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Updated Line Count
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `routes.py` | 80 | Route extraction orchestration |
+| `linker.py` | 60 | Call-to-handler matching |
+| `frameworks/flask.py` | 30 | Flask route patterns |
+| `frameworks/fastapi.py` | 30 | FastAPI route patterns |
+| `frameworks/gin.py` | 30 | Go Gin route patterns |
+| `frameworks/express.py` | 30 | Express route patterns |
+| `frameworks/aspnet.py` | 30 | ASP.NET route patterns |
+| **Subtotal** | **290** | Route linking |
+| **+ Service Extractor** | **360** | Call detection |
+| **Grand Total** | **650** | Full extraction + linking |
 
 ---
 
@@ -1650,12 +1868,12 @@ Query (string)
 | 1 | ~0 | - | Dagster |
 | 2 | ~50 | `raw_code_files` | git |
 | 3 | ~20 | `code_chunks` | LlamaIndex |
-| 4 | ~350 | `service_relations` | tree-sitter (multi-lang) |
+| 4 | ~650 | `service_relations` | tree-sitter + route linking |
 | 5 | ~30 | `vector_index` | LanceDB |
 | 6 | ~50 | `knowledge_graph` | Graphiti + Neo4j Aura |
 | 7 | ~100 | `retriever` | - |
 
-**MVP Total: ~600 custom lines**
+**MVP Total: ~900 custom lines**
 
 ### Track B (Post-MVP)
 
