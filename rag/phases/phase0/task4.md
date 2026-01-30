@@ -1,6 +1,6 @@
 # Task 0.4: Define Entity Schema
 
-**Status:** [ ] Not Started  |  [ ] In Progress  |  [ ] Complete
+**Status:** [ ] Not Started  |  [ ] In Progress  |  [x] Complete
 
 ## Objective
 
@@ -110,12 +110,12 @@ Ensure these domain concepts can be represented:
 
 ## Acceptance Criteria
 
-- [ ] EntityType enum has all 9 types
-- [ ] RelationType enum has all 11 types
-- [ ] EntityID and RelationshipID are frozen (hashable)
-- [ ] Entity dataclass captures all necessary fields
-- [ ] Relationship dataclass captures all necessary fields
-- [ ] Can represent all examples from domain model table
+- [x] EntityType enum has all 9 types
+- [x] RelationType enum has all 11 types
+- [x] EntityID and RelationshipID are frozen (hashable)
+- [x] Entity dataclass captures all necessary fields
+- [x] Relationship dataclass captures all necessary fields
+- [x] Can represent all examples from domain model table
 
 ## Dependencies
 

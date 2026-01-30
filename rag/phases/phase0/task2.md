@@ -1,6 +1,6 @@
 # Task 0.2: Define Storage Protocols
 
-**Status:** [ ] Not Started  |  [ ] In Progress  |  [ ] Complete
+**Status:** [ ] Not Started  |  [ ] In Progress  |  [x] Complete
 
 ## Objective
 
@@ -184,12 +184,12 @@ class GraphStore(Protocol):
 
 ## Acceptance Criteria
 
-- [ ] VectorStore protocol complete with all methods
-- [ ] GraphStore protocol complete with all methods
-- [ ] All methods have docstrings with behavior specification
-- [ ] Error types documented in Raises sections
-- [ ] BatchResult and SearchResult dataclasses defined
-- [ ] Type hints use Protocol from typing
+- [x] VectorStore protocol complete with all methods
+- [x] GraphStore protocol complete with all methods
+- [x] All methods have docstrings with behavior specification
+- [x] Error types documented in Raises sections
+- [x] BatchResult and SearchResult dataclasses defined
+- [x] Type hints use Protocol from typing
 
 ## Dependencies
 

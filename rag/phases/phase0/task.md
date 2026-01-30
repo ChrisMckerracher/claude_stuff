@@ -21,20 +21,20 @@
 
 ## Tasks
 
-- [ ] [Task 1: Define Core Data Types](task1.md)
-- [ ] [Task 2: Define Storage Protocols](task2.md)
-- [ ] [Task 3: Define Processing Protocols](task3.md)
-- [ ] [Task 4: Define Entity Schema](task4.md)
-- [ ] [Task 5: Define Error Types](task5.md)
+- [x] [Task 1: Define Core Data Types](task1.md)
+- [x] [Task 2: Define Storage Protocols](task2.md)
+- [x] [Task 3: Define Processing Protocols](task3.md)
+- [x] [Task 4: Define Entity Schema](task4.md)
+- [x] [Task 5: Define Error Types](task5.md)
 
 ## Verification Checklist
 
-- [ ] All types are immutable or clearly mutable
-- [ ] All protocols have docstrings specifying behavior
-- [ ] No protocol method has side effects not mentioned in name
-- [ ] Every async method that could fail has error type documented
-- [ ] Entity/Relationship schema covers all design doc examples
-- [ ] Type checker passes with strict mode
+- [x] All types are immutable or clearly mutable
+- [x] All protocols have docstrings specifying behavior
+- [x] No protocol method has side effects not mentioned in name
+- [x] Every async method that could fail has error type documented
+- [x] Entity/Relationship schema covers all design doc examples
+- [x] Type checker passes with strict mode
 
 ## Quick Check
 

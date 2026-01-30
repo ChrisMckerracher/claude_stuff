@@ -1,6 +1,6 @@
 # Task 0.3: Define Processing Protocols
 
-**Status:** [ ] Not Started  |  [ ] In Progress  |  [ ] Complete
+**Status:** [ ] Not Started  |  [ ] In Progress  |  [x] Complete
 
 ## Objective
 
@@ -158,12 +158,12 @@ class CrawlResult:
 
 ## Acceptance Criteria
 
-- [ ] Chunker protocol defined with chunk() method
-- [ ] Scrubber protocol defined with scrub() and scrub_batch() methods
-- [ ] Embedder protocol defined with embed(), embed_batch(), dimension
-- [ ] Crawler protocol defined with crawl() method
-- [ ] CrawlSource and CrawlResult dataclasses defined
-- [ ] ScrubResult dataclass defined with success property
+- [x] Chunker protocol defined with chunk() method
+- [x] Scrubber protocol defined with scrub() and scrub_batch() methods
+- [x] Embedder protocol defined with embed(), embed_batch(), dimension
+- [x] Crawler protocol defined with crawl() method
+- [x] CrawlSource and CrawlResult dataclasses defined
+- [x] ScrubResult dataclass defined with success property
 
 ## Dependencies
 
