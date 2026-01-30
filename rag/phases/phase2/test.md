@@ -1,12 +1,25 @@
 # Phase 2: Test Scenarios
 
-## Feature: PHI Scrubbing
+## NLP Backend Modes
+
+Phase 2 supports pluggable NLP backends. See [NLP_BACKENDS.md](../../docs/NLP_BACKENDS.md).
+
+| Mode | PERSON Detection | Model Required |
+|------|-----------------|----------------|
+| `regex` (default) | No | None |
+| `spacy` (optional) | Yes | en_core_web_lg |
+
+## Feature: PHI Scrubbing (Regex Mode - Default)
 
 ```gherkin
-Feature: PHI Scrubbing
+Feature: PHI Scrubbing (Regex Mode)
   As a compliance officer
   I want PII removed from code and documentation
   So that sensitive data is not exposed in search results
+
+  Background:
+    Given I am using the default regex-only backend
+    And no NLP model is required
 
   Scenario: Scrub email addresses
     Given text containing "Contact john@example.com for help"
@@ -21,12 +34,6 @@ Feature: PHI Scrubbing
     Then "555-123-4567" should not appear in the result
     And the scrub_log should contain a PHONE_NUMBER entry
 
-  Scenario: Scrub person names
-    Given text containing "John Smith reviewed this PR"
-    When I scrub the text
-    Then "John Smith" should not appear in the result
-    And the replacement should look like a real name
-
   Scenario: Scrub SSN with redaction
     Given text containing "SSN: 123-45-6789"
     When I scrub the text
@@ -34,7 +41,17 @@ Feature: PHI Scrubbing
     And the replacement should be "XXX-XX-XXXX"
     And the actual SSN should never be stored
 
-  Scenario: Preserve code identifiers
+  Scenario: Scrub credit card numbers
+    Given text containing "Card: 4111-1111-1111-1111"
+    When I scrub the text
+    Then "4111-1111-1111-1111" should not appear in the result
+
+  Scenario: Scrub IP addresses
+    Given text containing "Server IP: 192.168.1.100"
+    When I scrub the text
+    Then "192.168.1.100" should not appear in the result
+
+  Scenario: Preserve code identifiers (regex mode)
     Given Python code:
       """
       def authenticate_user(username):
@@ -45,21 +62,50 @@ Feature: PHI Scrubbing
     And "get_user" should be preserved
     And "username" should be preserved
 
+  Scenario: Person names NOT detected in regex mode
+    Given text containing "John Smith reviewed this PR"
+    When I scrub the text with regex backend
+    Then "John Smith" WILL still appear (no NER)
+    And scrub_log should be empty for PERSON
+
   Scenario: Multiple PII types in same text
-    Given text containing:
-      """
-      John Smith (john@example.com) called 555-123-4567
-      """
+    Given text containing "Email john@example.com or call 555-123-4567"
     When I scrub the text
-    Then none of the PII should appear
-    And scrub_log should have 3 entries
-    And each PII type should be logged correctly
+    Then "john@example.com" should not appear
+    And "555-123-4567" should not appear
+    And scrub_log should have 2 entries
 
   Scenario: Text with no PII
     Given text containing "def foo(): return 42"
     When I scrub the text
     Then the text should be unchanged
     And scrub_log should be empty
+```
+
+## Feature: PHI Scrubbing (spaCy Mode - Optional)
+
+```gherkin
+Feature: PHI Scrubbing (spaCy Mode)
+  As a compliance officer
+  I want person names detected and scrubbed
+  So that author attribution is removed
+
+  Background:
+    Given I have installed spacy and en_core_web_lg model
+    And I create an analyzer with backend="spacy"
+
+  @requires-spacy
+  Scenario: Scrub person names
+    Given text containing "John Smith reviewed this PR"
+    When I scrub the text with spaCy backend
+    Then "John Smith" should not appear in the result
+    And the replacement should look like a real name
+
+  @requires-spacy
+  Scenario: Scrub locations
+    Given text containing "The server is in New York"
+    When I scrub the text with spaCy backend
+    Then "New York" should not appear in the result
 ```
 
 ## Feature: Pseudonymization Consistency
