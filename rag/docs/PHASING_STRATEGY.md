@@ -29,17 +29,19 @@
 Dagster Assets (orchestration + observability)
     ├── raw_code_files      → crawl repos
     ├── code_chunks         → LlamaIndex CodeSplitter
-    ├── clean_chunks        → Presidio PHI scrubbing
-    ├── service_relations   → custom tree-sitter extraction
+    ├── route_registry      → extract routes to SQLite (ALL services)
+    ├── service_relations   → extract calls + link via registry
+    ├── clean_chunks        → Presidio PHI scrubbing (post-MVP)
     ├── vector_index        → LanceDB
     └── knowledge_graph     → Graphiti
 ```
 
 **What We Build Custom:**
 1. `repo_crawler` asset - coordinates multiple git repos (~50 lines)
-2. `service_extractor` asset - AST-based call detection + route linking (~650 lines)
+2. `service_extractor` asset - AST-based call detection + route linking (~750 lines)
    - Call detection: HTTP clients, gRPC, queues across Python/Go/TS/C#
    - Route extraction: Flask, FastAPI, Gin, Express, ASP.NET
+   - RouteRegistry: SQLite-backed storage for cross-service linking
    - Linker: matches calls to handler files by path pattern
 3. `phi_scrubber` asset - Presidio wrapper (~50 lines)
 
@@ -54,14 +56,14 @@ Dagster Assets (orchestration + observability)
 | 1 | Project Setup | Dagster + deps config | `dagster dev` runs |
 | 2 | Repo Crawler Asset | ~50 lines | Unit test with fixture repos |
 | 3 | Code Chunks Asset | ~20 lines (configure CodeSplitter) | Chunks look correct |
-| 4 | Service Extractor + Route Linker | ~650 lines (extraction + linking) | Unit test per language + framework |
+| 4 | Service Extractor + Route Linker | ~750 lines (extraction + linking + registry) | Unit test per language + framework |
 | 5 | Vector Index Asset | ~30 lines (configure LanceDB) | Search returns results |
 | 6 | Graph Asset | ~50 lines (configure Graphiti) | Graph queries work |
 | 7 | Hybrid Retriever | ~100 lines | End-to-end test |
 
 **MVP Deliverable:** Working multi-repo code search with graph expansion + Dagster UI.
 
-**Lines of Custom Code:** ~900 (with route linking)
+**Lines of Custom Code:** ~1000 (with route linking + registry)
 
 ### Track B: Compliance & Conversations (Post-MVP)
 
@@ -464,6 +466,374 @@ class CallLinker:
 | **Subtotal** | **290** | Route linking |
 | **+ Service Extractor** | **360** | Call detection |
 | **Grand Total** | **650** | Full extraction + linking |
+
+---
+
+## RouteRegistry: Intermediate Storage
+
+The RouteRegistry is a critical interface that allows us to decouple route extraction from call linking. Routes are extracted from ALL services first, stored in the registry, then calls are linked.
+
+### Why a Registry?
+
+**Problem:** When `auth-service` calls `user-service`, we need to know what routes `user-service` exposes. But we're processing `auth-service` first.
+
+**Solution:** Extract routes from ALL services into a registry FIRST, then do a second pass to extract calls and link them.
+
+### RouteRegistry Protocol
+
+```python
+# rag/extractors/registry.py (~80 lines total)
+
+from typing import Protocol
+from dataclasses import dataclass
+
+@dataclass
+class RouteDefinition:
+    """A route defined in a service."""
+    service: str
+    method: Literal["GET", "POST", "PUT", "DELETE", "PATCH"]
+    path: str                    # /api/users/{user_id}
+    handler_file: str            # src/controllers/user_controller.py
+    handler_function: str        # get_user
+    line_number: int
+
+
+class RouteRegistry(Protocol):
+    """Protocol for storing and querying route definitions.
+
+    Implementations can be in-memory (testing) or persistent (SQLite).
+    """
+
+    def add_routes(self, service: str, routes: list[RouteDefinition]) -> None:
+        """Store routes for a service. Replaces existing routes for that service."""
+        ...
+
+    def get_routes(self, service: str) -> list[RouteDefinition]:
+        """Get all routes for a service. Returns empty list if service unknown."""
+        ...
+
+    def find_route(
+        self,
+        service: str,
+        method: str,
+        path: str
+    ) -> RouteDefinition | None:
+        """Find a route matching the method and path pattern.
+
+        Path matching handles parameterized routes:
+        - /api/users/123 matches /api/users/{user_id}
+        - /api/orders/456/items matches /api/orders/{id}/items
+        """
+        ...
+
+    def all_services(self) -> list[str]:
+        """List all services with registered routes."""
+        ...
+
+    def clear(self, service: str | None = None) -> None:
+        """Clear routes. If service specified, only that service. Else all."""
+        ...
+```
+
+### InMemoryRegistry (Testing)
+
+```python
+# rag/extractors/registry.py (continued)
+
+class InMemoryRegistry(RouteRegistry):
+    """In-memory implementation for testing and small datasets."""
+
+    def __init__(self):
+        self._routes: dict[str, list[RouteDefinition]] = {}
+
+    def add_routes(self, service: str, routes: list[RouteDefinition]) -> None:
+        self._routes[service] = routes
+
+    def get_routes(self, service: str) -> list[RouteDefinition]:
+        return self._routes.get(service, [])
+
+    def find_route(
+        self,
+        service: str,
+        method: str,
+        path: str
+    ) -> RouteDefinition | None:
+        for route in self.get_routes(service):
+            if route.method == method and self._path_matches(route.path, path):
+                return route
+        return None
+
+    def _path_matches(self, pattern: str, path: str) -> bool:
+        """Match /api/users/{user_id} against /api/users/123."""
+        import re
+        regex = re.sub(r'\{[^}]+\}', r'[^/]+', pattern)
+        return re.match(f"^{regex}$", path) is not None
+
+    def all_services(self) -> list[str]:
+        return list(self._routes.keys())
+
+    def clear(self, service: str | None = None) -> None:
+        if service:
+            self._routes.pop(service, None)
+        else:
+            self._routes.clear()
+```
+
+### SQLiteRegistry (Production)
+
+```python
+# rag/extractors/sqlite_registry.py (~50 lines)
+
+import sqlite3
+from contextlib import contextmanager
+
+class SQLiteRegistry(RouteRegistry):
+    """SQLite-backed registry for persistence across runs."""
+
+    def __init__(self, db_path: str = "./data/routes.db"):
+        self._db_path = db_path
+        self._init_db()
+
+    def _init_db(self):
+        with self._conn() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS routes (
+                    service TEXT,
+                    method TEXT,
+                    path TEXT,
+                    handler_file TEXT,
+                    handler_function TEXT,
+                    line_number INTEGER,
+                    PRIMARY KEY (service, method, path)
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_service ON routes(service)")
+
+    @contextmanager
+    def _conn(self):
+        conn = sqlite3.connect(self._db_path)
+        try:
+            yield conn
+            conn.commit()
+        finally:
+            conn.close()
+
+    def add_routes(self, service: str, routes: list[RouteDefinition]) -> None:
+        with self._conn() as conn:
+            # Clear existing routes for this service
+            conn.execute("DELETE FROM routes WHERE service = ?", (service,))
+            # Insert new routes
+            conn.executemany(
+                "INSERT INTO routes VALUES (?, ?, ?, ?, ?, ?)",
+                [(r.service, r.method, r.path, r.handler_file,
+                  r.handler_function, r.line_number) for r in routes]
+            )
+
+    def get_routes(self, service: str) -> list[RouteDefinition]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM routes WHERE service = ?", (service,)
+            ).fetchall()
+            return [RouteDefinition(*row) for row in rows]
+
+    def find_route(self, service: str, method: str, path: str) -> RouteDefinition | None:
+        # For pattern matching, we need to load routes and match in Python
+        for route in self.get_routes(service):
+            if route.method == method and self._path_matches(route.path, path):
+                return route
+        return None
+
+    def _path_matches(self, pattern: str, path: str) -> bool:
+        import re
+        regex = re.sub(r'\{[^}]+\}', r'[^/]+', pattern)
+        return re.match(f"^{regex}$", path) is not None
+
+    def all_services(self) -> list[str]:
+        with self._conn() as conn:
+            rows = conn.execute("SELECT DISTINCT service FROM routes").fetchall()
+            return [r[0] for r in rows]
+
+    def clear(self, service: str | None = None) -> None:
+        with self._conn() as conn:
+            if service:
+                conn.execute("DELETE FROM routes WHERE service = ?", (service,))
+            else:
+                conn.execute("DELETE FROM routes")
+```
+
+---
+
+## Dagster Control Flow: Route Extraction → Call Linking
+
+The key insight is that **routes must be extracted from ALL services BEFORE calls can be linked**. This is expressed as Dagster asset dependencies:
+
+### Asset Dependency Graph
+
+```
+raw_code_files (all repos)
+        │
+        ├──────────────────────────────────┐
+        │                                  │
+        ▼                                  ▼
+┌───────────────────┐            ┌───────────────────┐
+│   route_registry  │            │   code_chunks     │
+│ (extract routes,  │            │ (LlamaIndex       │
+│  store in SQLite) │            │  CodeSplitter)    │
+└─────────┬─────────┘            └───────────────────┘
+          │
+          │  depends on route_registry
+          ▼
+┌───────────────────┐
+│ service_relations │
+│ (extract calls,   │
+│  link to routes)  │
+└───────────────────┘
+          │
+          ▼
+┌───────────────────┐
+│ knowledge_graph   │
+│ (Graphiti)        │
+└───────────────────┘
+```
+
+### Dagster Asset Definitions
+
+```python
+# rag/dagster/assets.py
+
+from dagster import asset, AssetIn
+from rag.extractors.routes import RouteExtractor
+from rag.extractors.sqlite_registry import SQLiteRegistry
+from rag.extractors.extractor import ServiceExtractor
+from rag.extractors.linker import CallLinker
+
+
+@asset
+def raw_code_files(config: Config) -> dict[str, list[Path]]:
+    """Crawl all repos and return files grouped by service.
+
+    Returns:
+        {"user-service": [Path(...), ...], "auth-service": [...]}
+    """
+    result = {}
+    for repo in config.repos:
+        service_name = repo.name
+        result[service_name] = list(crawl_repo(repo.path))
+    return result
+
+
+@asset
+def route_registry(raw_code_files: dict[str, list[Path]]) -> str:
+    """Extract routes from ALL services and store in SQLite.
+
+    This MUST complete before service_relations can run.
+
+    Returns:
+        Path to SQLite database (for downstream assets to use)
+    """
+    db_path = "./data/routes.db"
+    registry = SQLiteRegistry(db_path)
+    registry.clear()  # Fresh start
+
+    extractor = RouteExtractor()
+
+    for service_name, files in raw_code_files.items():
+        routes = []
+        for file_path in files:
+            content = file_path.read_bytes()
+            routes.extend(extractor.extract(content, str(file_path), service_name))
+
+        registry.add_routes(service_name, routes)
+
+    return db_path
+
+
+@asset
+def service_relations(
+    raw_code_files: dict[str, list[Path]],
+    route_registry: str  # DB path from route_registry asset
+) -> list[ServiceRelation]:
+    """Extract service calls and link to handlers using the registry.
+
+    Depends on route_registry so all routes are available before linking.
+    """
+    registry = SQLiteRegistry(route_registry)  # Load from DB
+    linker = CallLinker(registry)
+    extractor = ServiceExtractor()
+
+    relations = []
+
+    for service_name, files in raw_code_files.items():
+        for file_path in files:
+            content = file_path.read_bytes()
+
+            # Extract raw calls
+            calls = extractor.extract_from_file(str(file_path), content)
+
+            # Link each call to its handler
+            for call in calls:
+                relation = linker.link(call)
+                relations.append(relation)
+
+    return relations
+
+
+@asset
+def knowledge_graph(service_relations: list[ServiceRelation]) -> str:
+    """Write service relations to Graphiti.
+
+    Creates edges like:
+        (auth-service/login.py) --HTTP_CALL--> (user-service/user_controller.py)
+    """
+    graph = GraphitiStore(...)
+
+    for rel in service_relations:
+        # Add source file as entity
+        source_entity = await graph.add_entity(Entity(
+            type=EntityType.FILE,
+            name=rel.source_file,
+        ))
+
+        # Add target file as entity
+        target_entity = await graph.add_entity(Entity(
+            type=EntityType.FILE,
+            name=rel.target_file,
+        ))
+
+        # Add relationship
+        await graph.add_relationship(
+            source=source_entity.id,
+            target=target_entity.id,
+            rel_type=RelationType.CALLS,
+            properties={
+                "call_type": rel.relation_type,
+                "route_path": rel.route_path,
+                "source_line": rel.source_line,
+            }
+        )
+
+    return "knowledge_graph_complete"
+```
+
+### Execution Order Guarantee
+
+Dagster ensures:
+
+1. `raw_code_files` runs first (no dependencies)
+2. `route_registry` runs second (depends on raw_code_files)
+3. `service_relations` runs third (depends on BOTH raw_code_files AND route_registry)
+4. `knowledge_graph` runs last (depends on service_relations)
+
+**This guarantees all routes are in the registry before any calls are linked.**
+
+### Updated Line Counts
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `registry.py` | 50 | Protocol + InMemoryRegistry |
+| `sqlite_registry.py` | 50 | SQLite implementation |
+| **+ Existing extraction** | **650** | Service + Route extractors |
+| **Grand Total** | **750** | Full extraction + linking + registry |
 
 ---
 
@@ -1868,12 +2238,13 @@ Query (string)
 | 1 | ~0 | - | Dagster |
 | 2 | ~50 | `raw_code_files` | git |
 | 3 | ~20 | `code_chunks` | LlamaIndex |
-| 4 | ~650 | `service_relations` | tree-sitter + route linking |
+| 4a | ~100 | `route_registry` | tree-sitter, SQLite |
+| 4b | ~650 | `service_relations` | tree-sitter + linking |
 | 5 | ~30 | `vector_index` | LanceDB |
 | 6 | ~50 | `knowledge_graph` | Graphiti + Neo4j Aura |
 | 7 | ~100 | `retriever` | - |
 
-**MVP Total: ~900 custom lines**
+**MVP Total: ~1000 custom lines**
 
 ### Track B (Post-MVP)
 
