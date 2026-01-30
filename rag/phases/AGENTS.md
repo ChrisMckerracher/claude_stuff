@@ -321,3 +321,30 @@ Ready for Phase 4
 4. **Test** using Cucumber scenarios as guide
 5. **Verify** all checklist items
 6. **Report** completion before moving on
+
+## Technical Debt
+
+Track implementation compromises that need future attention.
+
+### TokenCounter: Heuristic vs HuggingFace Tokenizer
+
+**File:** `rag/chunking/token_counter.py`
+
+**Issue:** The original spec called for using HuggingFace `AutoTokenizer` with the
+embedding model (`jinaai/jina-embeddings-v3`) to ensure token counts exactly match
+what the model sees. However, network access was blocked during implementation.
+
+**Current State:** Uses a regex-based heuristic tokenizer that approximates BPE
+behavior by splitting on word boundaries and expanding long identifiers.
+
+**Impact:** Token counts may differ from actual model tokenization by ~10-20%.
+This could cause:
+- Chunks slightly over/under the target size
+- Inconsistent retrieval quality if chunks are poorly sized
+
+**To Fix:**
+1. Ensure network access to huggingface.co
+2. See detailed instructions in `rag/chunking/token_counter.py` docstring
+3. Run tests and adjust expected values for new token counts
+
+**Priority:** Medium - affects chunk quality but system is functional

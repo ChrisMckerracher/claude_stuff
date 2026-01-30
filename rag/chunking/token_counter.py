@@ -3,6 +3,57 @@
 Uses a simple heuristic-based tokenizer that works offline.
 Approximates BPE tokenization by splitting on word boundaries
 and punctuation, with adjustments for code tokens.
+
+TODO(tokenizer): Replace heuristic tokenizer with HuggingFace AutoTokenizer
+==============================================================================
+This module uses a regex-based heuristic tokenizer because network access was
+blocked during initial implementation (HuggingFace model downloads failed).
+
+To upgrade to the proper model-aligned tokenizer:
+
+1. Ensure network access to huggingface.co
+
+2. Install transformers (already in pyproject.toml):
+   uv add transformers
+
+3. Replace TokenCounter implementation with:
+
+   ```python
+   from transformers import AutoTokenizer
+   from rag.config import EMBEDDING_MODEL
+
+   class TokenCounter:
+       def __init__(self, model_name: str = EMBEDDING_MODEL):
+           self._tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+       def count(self, text: str) -> int:
+           return len(self._tokenizer.encode(text, add_special_tokens=False))
+
+       def truncate(self, text: str, max_tokens: int) -> str:
+           tokens = self._tokenizer.encode(text, add_special_tokens=False)
+           if len(tokens) <= max_tokens:
+               return text
+           truncated = self._tokenizer.decode(tokens[:max_tokens])
+           last_space = truncated.rfind(" ")
+           if last_space > len(truncated) * 0.8:
+               truncated = truncated[:last_space]
+           return truncated
+   ```
+
+4. Update tests to account for different token counts (HuggingFace will give
+   different results than the heuristic approach).
+
+5. First run will download the tokenizer (~500MB for jina-embeddings-v3).
+
+Alternative: Use tiktoken for offline-capable tokenization:
+   ```python
+   import tiktoken
+   self._tokenizer = tiktoken.get_encoding("cl100k_base")
+   ```
+   (Requires first-run download of ~1MB encoding file)
+
+See: rag/config.py for EMBEDDING_MODEL setting (jinaai/jina-embeddings-v3)
+==============================================================================
 """
 
 import re
