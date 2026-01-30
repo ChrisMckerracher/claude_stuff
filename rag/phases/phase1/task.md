@@ -19,19 +19,19 @@
 
 ## Tasks
 
-- [ ] [Task 1: Token Counter](task1.md)
-- [ ] [Task 2: AST Chunker](task2.md)
-- [ ] [Task 3: Markdown Chunker](task3.md)
-- [ ] [Task 4: Thread Chunker](task4.md)
+- [x] [Task 1: Token Counter](task1.md)
+- [x] [Task 2: AST Chunker](task2.md)
+- [x] [Task 3: Markdown Chunker](task3.md)
+- [x] [Task 4: Thread Chunker](task4.md)
 
 ## Verification Checklist
 
-- [ ] All chunkers implement Chunker protocol
-- [ ] Token counts verified against model tokenizer
-- [ ] No chunk exceeds max_tokens (512 by default)
-- [ ] Chunks have valid byte ranges
-- [ ] Context prefix (file > class > function) computed correctly
-- [ ] Unit tests pass with real tree-sitter
+- [x] All chunkers implement Chunker protocol
+- [x] Token counts verified against model tokenizer
+- [x] No chunk exceeds max_tokens (512 by default)
+- [x] Chunks have valid byte ranges
+- [x] Context prefix (file > class > function) computed correctly
+- [x] Unit tests pass with real tree-sitter
 
 ## Quick Check
 
