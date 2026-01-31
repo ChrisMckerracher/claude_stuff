@@ -128,13 +128,24 @@ Phase 4 now includes full multi-language extraction support (Python, Go, TypeScr
 
 ## Quick Check Results
 
+**Last Verified: 2026-01-31**
+
 ```
 $ uv run pytest tests/test_phase4/ -v
-128 passed in 1.17s
+128 passed in 1.19s
 
-$ Quick check (full multi-language):
+$ Quick check (core pipeline):
+✓ Python extraction works
+✓ InMemory registry + linker works
+✓ SQLite registry + linker works
+✓ Go extraction works (requires valid Go syntax)
+✓ TypeScript extraction works
+✓ C# extraction works
+
 QUICK CHECK PASSED: Full Phase 4 works (Python, Go, TypeScript, C#)
 ```
+
+**Note:** Tree-sitter extractors require syntactically valid code for the target language.
 
 ---
 
