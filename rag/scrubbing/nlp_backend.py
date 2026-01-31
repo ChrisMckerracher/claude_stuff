@@ -1,18 +1,3 @@
-# Task 2.1: NLP Backend
-
-**Status:** [ ] Not Started  |  [ ] In Progress  |  [ ] Complete
-
-## Objective
-
-Create a pluggable NLP backend factory that allows swapping between regex-only, spaCy, and transformers backends without changing application code.
-
-## File
-
-`rag/scrubbing/nlp_backend.py`
-
-## Implementation
-
-```python
 """Pluggable NLP backend for Presidio analyzer.
 
 This module provides a factory function to create Presidio AnalyzerEngine
@@ -26,12 +11,8 @@ from __future__ import annotations
 
 import os
 from enum import Enum
-from typing import TYPE_CHECKING
 
 from presidio_analyzer import AnalyzerEngine
-
-if TYPE_CHECKING:
-    pass
 
 
 class NlpBackend(str, Enum):
@@ -148,9 +129,64 @@ def _detect_best_backend() -> NlpBackend:
 
 
 def _create_regex_analyzer() -> AnalyzerEngine:
-    """Create analyzer with regex-only recognizers (no NLP model)."""
-    # AnalyzerEngine without NLP engine uses only regex recognizers
-    return AnalyzerEngine(nlp_engine=None, supported_languages=["en"])
+    """Create analyzer with regex-only recognizers (no NLP model).
+
+    Uses a minimal NLP engine that doesn't require model downloads.
+    """
+    from presidio_analyzer.nlp_engine import NlpArtifacts, NlpEngine
+
+    # Create a minimal NLP engine that doesn't load any models
+    # This prevents Presidio from trying to download spaCy models
+    class MinimalNlpEngine(NlpEngine):
+        """Minimal NLP engine that does no processing."""
+
+        def __init__(self) -> None:
+            self._supported_languages = ["en"]
+
+        def load(self) -> None:
+            """No-op load since we don't use any models."""
+            pass
+
+        def is_loaded(self) -> bool:
+            """Always loaded since we don't need any models."""
+            return True
+
+        def process_text(self, text: str, language: str) -> NlpArtifacts:  # type: ignore[override]
+            """Return empty result - we only use regex recognizers."""
+            return NlpArtifacts(
+                entities=[],
+                tokens=[],
+                lemmas=[],
+                tokens_indices=[],
+                nlp_engine=self,
+                language=language,
+            )
+
+        def process_batch(
+            self,
+            texts: list[str],
+            language: str,
+        ) -> list[NlpArtifacts]:
+            """Process batch - return empty results."""
+            return [self.process_text(text, language) for text in texts]
+
+        def get_supported_languages(self) -> list[str]:
+            """Return supported languages."""
+            return self._supported_languages
+
+        def get_supported_entities(self) -> list[str]:
+            """Return empty list - no NER entities without a model."""
+            return []
+
+        def is_stopword(self, word: str, language: str) -> bool:
+            """No stopword detection without a model."""
+            return False
+
+        def is_punct(self, word: str, language: str) -> bool:
+            """Basic punctuation detection."""
+            return word in ".,;:!?()[]{}\"'-"
+
+    return AnalyzerEngine(nlp_engine=MinimalNlpEngine(), supported_languages=["en"])
 
 
 def _create_spacy_analyzer(model: str) -> AnalyzerEngine:
@@ -232,116 +268,3 @@ def get_supported_entities(backend: str | NlpBackend = NlpBackend.REGEX) -> list
         return REGEX_ENTITIES.copy()
     else:
         return REGEX_ENTITIES + NER_ENTITIES
-```
-
-## Tests
-
-```python
-def test_create_regex_analyzer():
-    """Regex analyzer works without model downloads."""
-    analyzer = create_analyzer(backend="regex")
-    assert analyzer is not None
-    # Test it can analyze text
-    results = analyzer.analyze("test@example.com", language="en")
-    assert len(results) > 0
-    assert results[0].entity_type == "EMAIL_ADDRESS"
-
-
-def test_regex_detects_email():
-    """Regex mode detects email addresses."""
-    analyzer = create_analyzer(backend="regex")
-    results = analyzer.analyze(
-        text="Contact john@example.com for help",
-        language="en",
-    )
-    emails = [r for r in results if r.entity_type == "EMAIL_ADDRESS"]
-    assert len(emails) == 1
-
-
-def test_regex_detects_ssn():
-    """Regex mode detects SSNs."""
-    analyzer = create_analyzer(backend="regex")
-    results = analyzer.analyze(
-        text="SSN: 123-45-6789",
-        language="en",
-    )
-    ssns = [r for r in results if r.entity_type == "US_SSN"]
-    assert len(ssns) == 1
-
-
-def test_regex_detects_phone():
-    """Regex mode detects phone numbers."""
-    analyzer = create_analyzer(backend="regex")
-    results = analyzer.analyze(
-        text="Call 555-123-4567",
-        language="en",
-    )
-    phones = [r for r in results if r.entity_type == "PHONE_NUMBER"]
-    assert len(phones) == 1
-
-
-def test_regex_does_not_detect_person():
-    """Regex mode does NOT detect person names (requires NER)."""
-    analyzer = create_analyzer(backend="regex")
-    results = analyzer.analyze(
-        text="John Smith wrote this",
-        language="en",
-    )
-    persons = [r for r in results if r.entity_type == "PERSON"]
-    assert len(persons) == 0  # No NER, no PERSON detection
-
-
-def test_env_variable_override():
-    """RAG_NLP_BACKEND env var overrides default."""
-    import os
-
-    os.environ["RAG_NLP_BACKEND"] = "regex"
-    analyzer = create_analyzer()  # Should use regex due to env var
-    # Verify it's regex by checking PERSON is not detected
-    results = analyzer.analyze("John Smith", language="en")
-    persons = [r for r in results if r.entity_type == "PERSON"]
-    assert len(persons) == 0
-    del os.environ["RAG_NLP_BACKEND"]
-
-
-def test_get_supported_entities_regex():
-    """Regex backend reports correct supported entities."""
-    entities = get_supported_entities("regex")
-    assert "EMAIL_ADDRESS" in entities
-    assert "PHONE_NUMBER" in entities
-    assert "PERSON" not in entities  # NER only
-
-
-def test_get_supported_entities_spacy():
-    """spaCy backend reports additional NER entities."""
-    entities = get_supported_entities("spacy")
-    assert "EMAIL_ADDRESS" in entities
-    assert "PERSON" in entities  # NER available
-
-
-def test_auto_fallback_to_regex():
-    """Auto mode falls back to regex when no NLP available."""
-    # This test assumes spaCy model is NOT installed
-    backend = _detect_best_backend()
-    # Should be either spacy (if installed) or regex (fallback)
-    assert backend in [NlpBackend.SPACY, NlpBackend.TRANSFORMERS, NlpBackend.REGEX]
-```
-
-## Acceptance Criteria
-
-- [ ] `create_analyzer(backend="regex")` works without any model downloads
-- [ ] Regex mode detects EMAIL, PHONE, SSN, CREDIT_CARD, IP_ADDRESS
-- [ ] Regex mode does NOT detect PERSON (documents this limitation)
-- [ ] `RAG_NLP_BACKEND` env variable overrides default backend
-- [ ] `get_supported_entities()` returns correct list per backend
-- [ ] Clear error messages when spaCy/transformers not installed
-- [ ] Docstrings reference docs/NLP_BACKENDS.md
-
-## Dependencies
-
-- presidio-analyzer package
-- No model downloads for regex mode
-
-## Estimated Time
-
-25 minutes
