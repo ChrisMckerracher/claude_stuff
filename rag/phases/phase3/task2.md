@@ -4,7 +4,7 @@
 
 ## Objective
 
-Implement the Embedder protocol using Jina embeddings for code-optimized vector representations.
+Implement the Embedder protocol using fastembed for lightweight, ONNX-based vector embeddings.
 
 ## File
 
@@ -13,13 +13,12 @@ Implement the Embedder protocol using Jina embeddings for code-optimized vector 
 ## Implementation
 
 ```python
-from sentence_transformers import SentenceTransformer
-from rag.core.protocols import Embedder
+from fastembed import TextEmbedding
 from rag.core.errors import EmbeddingError
 from rag.config import EMBEDDING_MODEL, EMBEDDING_DIM
 
 class CodeRankEmbedder:
-    """Embedder using Jina embeddings model.
+    """Embedder using fastembed (ONNX-based, no PyTorch required).
 
     Optimized for code and technical documentation.
     """
@@ -28,10 +27,10 @@ class CodeRankEmbedder:
         """Initialize embedder.
 
         Args:
-            model_name: HuggingFace model name (default: from config)
+            model_name: Model name (default: from config)
         """
         try:
-            self._model = SentenceTransformer(model_name)
+            self._model = TextEmbedding(model_name)
         except Exception as e:
             raise EmbeddingError("", f"Failed to load model {model_name}: {e}")
         self._dimension = EMBEDDING_DIM
@@ -53,8 +52,8 @@ class CodeRankEmbedder:
             return [0.0] * self._dimension
 
         try:
-            vector = self._model.encode(text, convert_to_numpy=True)
-            return vector.tolist()
+            vectors = list(self._model.embed([text]))
+            return vectors[0].tolist()
         except Exception as e:
             raise EmbeddingError(text, f"Embedding failed: {e}")
 
@@ -81,7 +80,7 @@ class CodeRankEmbedder:
             return [[0.0] * self._dimension for _ in texts]
 
         try:
-            vectors = self._model.encode(non_empty_texts, convert_to_numpy=True)
+            vectors = list(self._model.embed(non_empty_texts))
 
             # Reconstruct full result with zero vectors for empty texts
             result = [[0.0] * self._dimension for _ in texts]
@@ -94,7 +93,7 @@ class CodeRankEmbedder:
 
     @property
     def dimension(self) -> int:
-        """Vector dimension (768 for jina-embeddings-v3)."""
+        """Vector dimension (768 for jina-embeddings-v2-base-code)."""
         return self._dimension
 
 
@@ -201,7 +200,7 @@ def test_mock_embedder_deterministic():
 ## Dependencies
 
 - Task 0.3 (Embedder protocol)
-- sentence-transformers package
+- fastembed package (`uv add fastembed`)
 
 ## Estimated Time
 

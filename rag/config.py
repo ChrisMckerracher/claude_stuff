@@ -4,8 +4,9 @@ These values are used across the pipeline for consistent behavior.
 """
 
 # Embedding model configuration
-# Using jina-embeddings-v3 for code-optimized embeddings
-EMBEDDING_MODEL: str = "jinaai/jina-embeddings-v3"
+# Using jina-embeddings-v2-base-en via fastembed (ONNX, no PyTorch)
+# Note: v3 available but CC BY-NC 4.0 licensed
+EMBEDDING_MODEL: str = "jinaai/jina-embeddings-v2-base-en"
 EMBEDDING_DIM: int = 768
 
 # Chunking configuration
