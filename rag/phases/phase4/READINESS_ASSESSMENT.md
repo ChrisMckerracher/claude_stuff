@@ -5,9 +5,37 @@
 
 ## Executive Summary
 
-**Phase 4 Status: READY TO START** (with caveats)
+**Phase 4 Status: IN PROGRESS (4/12 tasks complete)**
 
-Prerequisites (Phases 0-3) are functionally complete - all implementations work and tests pass. However, Phase 2 and Phase 3 task files have not been updated to reflect completion status.
+Phase 4 core components (4a.1, 4a.2, 4c.1, 4e.1) are fully implemented and tested. 64 tests pass. Remaining tasks focus on multi-language support, SQLite persistence, and framework-specific patterns.
+
+---
+
+## Current Implementation Status
+
+### Completed Tasks
+
+| Task | Description | Tests | Status |
+|------|-------------|-------|--------|
+| 4a.1 | Base Types & Patterns | 18 pass | ✅ COMPLETE |
+| 4a.2 | Python HTTP Extractor | 19 pass | ✅ COMPLETE |
+| 4c.1 | Registry Protocol & InMemory | 16 pass | ✅ COMPLETE |
+| 4e.1 | Call Linker Implementation | 11 pass | ✅ COMPLETE |
+
+**Total: 64 tests pass**
+
+### Remaining Tasks
+
+| Task | Description | Task File | Status |
+|------|-------------|-----------|--------|
+| 4a.3 | Python gRPC & Queue Patterns | ❌ Missing | Not Started |
+| 4b.1 | Go Extractor | ❌ Missing | Not Started |
+| 4b.2 | TypeScript Extractor | ❌ Missing | Not Started |
+| 4b.3 | C# Extractor | ❌ Missing | Not Started |
+| 4c.2 | SQLite Registry | ❌ Missing | Not Started |
+| 4d.1 | FastAPI Pattern | ❌ Missing | Not Started |
+| 4f.1 | Flask & Express Patterns | ❌ Missing | Not Started |
+| 4f.2 | Gin & ASP.NET Patterns | ❌ Missing | Not Started |
 
 ---
 
@@ -21,14 +49,6 @@ Prerequisites (Phases 0-3) are functionally complete - all implementations work 
 | Verification checklist | 6/6 items checked |
 | Quick check | PASS |
 
-**Imports verified:**
-```
-from rag.core.types import ChunkID, RawChunk, CleanChunk, EmbeddedChunk, CorpusType
-from rag.core.protocols import VectorStore, Chunker, Scrubber, Embedder
-from rag.core.schema import EntityType, RelationType, Entity, Relationship
-from rag.core.errors import RAGError, StorageError, ChunkingError
-```
-
 ### Phase 1: Chunking Pipeline ✅ COMPLETE
 
 | Criterion | Status |
@@ -38,113 +58,88 @@ from rag.core.errors import RAGError, StorageError, ChunkingError
 | Quick check | PASS |
 | Tests | 81 tests pass |
 
-**Files implemented:**
-- `rag/chunking/token_counter.py`
-- `rag/chunking/ast_chunker.py`
-- `rag/chunking/md_chunker.py`
-- `rag/chunking/thread_chunker.py`
-
-### Phase 2: PHI Scrubbing ⚠️ IMPLEMENTATION COMPLETE / TASKS NOT MARKED
+### Phase 2: PHI Scrubbing ✅ COMPLETE
 
 | Criterion | Status |
 |-----------|--------|
-| Task checklist | 0/3 tasks marked complete |
-| Verification checklist | 0/7 items checked |
+| Task checklist | 3/3 tasks marked complete |
+| Verification checklist | 7/7 items checked |
 | Quick check | PASS |
-| Tests | All pass |
 
-**Files implemented:**
-- `rag/scrubbing/__init__.py`
-- `rag/scrubbing/nlp_backend.py`
-- `rag/scrubbing/scrubber.py`
-- `rag/scrubbing/pseudonymizer.py`
-
-**Note:** Implementation is functional. Task file needs updating to reflect completion.
-
-### Phase 3: LanceDB Vector Store ⚠️ IMPLEMENTATION COMPLETE / TASKS NOT MARKED
+### Phase 3: LanceDB Vector Store ✅ COMPLETE
 
 | Criterion | Status |
 |-----------|--------|
-| Task checklist | 0/2 tasks marked complete |
-| Verification checklist | 0/6 items checked |
-| Quick check | PASS (with MockEmbedder) |
+| Task checklist | 2/2 tasks marked complete |
+| Verification checklist | 6/6 items checked |
+| Quick check | PASS |
 | Tests | 25/25 tests pass |
 
-**Files implemented:**
-- `rag/indexing/lance_store.py`
-- `rag/indexing/embedder.py`
+---
 
-**Note:** CodeRankEmbedder requires network access to download models. MockEmbedder works for testing.
+## Implementation Files
+
+| File | Exists | Purpose |
+|------|--------|---------|
+| `rag/extractors/__init__.py` | ✅ | Package exports |
+| `rag/extractors/base.py` | ✅ | ServiceCall, Confidence, LanguageExtractor |
+| `rag/extractors/patterns.py` | ✅ | URL extraction, confidence determination |
+| `rag/extractors/languages/python.py` | ✅ | Python HTTP call extractor |
+| `rag/extractors/registry.py` | ✅ | RouteRegistry protocol, InMemoryRegistry |
+| `rag/extractors/linker.py` | ✅ | CallLinker, LinkResult |
+| `tests/test_phase4/` | ✅ | 64 tests across 4 test files |
 
 ---
 
-## Phase 4 Dependencies
+## Verification Checklist
 
-### Required Packages ✅
+### Phase 4a (Python Extraction) ✅ COMPLETE
+- [x] Python HTTP calls detected (requests, httpx, aiohttp)
+- [x] Confidence levels correct (HIGH/MEDIUM/LOW)
+- [x] Comments and docstrings ignored
+- [x] Quick check passes
 
-| Package | Status | Purpose |
-|---------|--------|---------|
-| tree-sitter | ✅ 0.25.2+ installed | AST parsing |
-| tree-sitter-python | ✅ 0.25.0+ installed | Python parsing |
-| tree-sitter-go | ✅ 0.25.0+ installed | Go parsing |
-| tree-sitter-typescript | ✅ 0.23.2+ installed | TypeScript parsing |
-| tree-sitter-c-sharp | ✅ 0.23.1+ installed | C# parsing |
-| sqlite3 | ✅ Built into Python | Route registry |
+### Phase 4b (Multi-Language) ⏳ NOT STARTED
+- [ ] Go HTTP calls detected (http.Get, client.Do)
+- [ ] TypeScript calls detected (fetch, axios)
+- [ ] C# calls detected (HttpClient)
 
-### Task Files Status
+### Phase 4c (Registry) ⚠️ PARTIAL
+- [x] RouteRegistry protocol defined
+- [ ] SQLiteRegistry persists routes
+- [x] find_route_by_request matches parameterized paths
 
-| Sub-Phase | Task File | Exists | Status |
-|-----------|-----------|--------|--------|
-| 4a | task4a_1.md | ✅ | Not Started |
-| 4a | task4a_2.md | ✅ | Not Started |
-| 4a | task4a_3.md | ❌ | Missing |
-| 4b | task4b_1.md | ❌ | Missing |
-| 4b | task4b_2.md | ❌ | Missing |
-| 4b | task4b_3.md | ❌ | Missing |
-| 4c | task4c_1.md | ✅ | Not Started |
-| 4c | task4c_2.md | ❌ | Missing |
-| 4d | task4d_1.md | ❌ | Missing |
-| 4e | task4e_1.md | ✅ | Not Started |
-| 4f | task4f_1.md | ❌ | Missing |
-| 4f | task4f_2.md | ❌ | Missing |
+### Phase 4d (FastAPI) ⏳ NOT STARTED
+- [ ] FastAPI @router.get/post decorators detected
+- [ ] Route path and handler function extracted
 
-**Summary:** 5 of 12 task files exist.
+### Phase 4e (Linker) ✅ COMPLETE
+- [x] CallLinker links calls to handlers
+- [x] Miss reasons tracked (no_routes, method_mismatch, path_mismatch)
 
-### Implementation Files
-
-| File | Exists |
-|------|--------|
-| `rag/extractors/` directory | ❌ No |
-| `rag/extractors/base.py` | ❌ No |
-| `rag/extractors/patterns.py` | ❌ No |
-| `rag/extractors/languages/python.py` | ❌ No |
-| `rag/extractors/registry.py` | ❌ No |
-| `rag/extractors/linker.py` | ❌ No |
-| `tests/test_phase4/` directory | ❌ No |
+### Phase 4f (Framework Patterns) ⏳ NOT STARTED
+- [ ] Flask, Gin, Express, ASP.NET patterns work
+- [ ] End-to-end fixture test passes
 
 ---
 
-## Blockers
+## Quick Check Results
 
-### Critical
+```
+$ uv run pytest tests/test_phase4/ -v
+64 passed in 0.49s
 
-None - all prerequisites are functionally met.
-
-### Minor
-
-1. **Phase 2/3 task files not updated** - Task.md files show incomplete status despite working implementations
-2. **Missing task files for Phase 4** - 7 of 12 task definition files are missing (4a.3, 4b.1-3, 4c.2, 4d.1, 4f.1-2)
-3. **Network dependency for embedder** - CodeRankEmbedder requires HuggingFace access; MockEmbedder works offline
+$ Quick check (core components):
+QUICK CHECK PASSED: Phase 4 core components work
+```
 
 ---
 
 ## Recommendations
 
-### Before Starting Phase 4
+### Immediate Next Steps
 
-1. **Update Phase 2 task.md** - Mark tasks 1-3 as complete
-2. **Update Phase 3 task.md** - Mark tasks 1-2 as complete
-3. **Create missing Phase 4 task files** (optional but recommended):
+1. **Create missing task files** for remaining sub-phases:
    - task4a_3.md: Python gRPC & Queue Patterns
    - task4b_1.md: Go Extractor
    - task4b_2.md: TypeScript Extractor
@@ -154,37 +149,29 @@ None - all prerequisites are functionally met.
    - task4f_1.md: Flask & Express Patterns
    - task4f_2.md: Gin & ASP.NET Patterns
 
-### Starting Phase 4
+2. **Prioritized implementation order:**
+   - 4c.2 SQLite Registry (persistence layer)
+   - 4d.1 FastAPI Pattern (route extraction)
+   - 4b.1 Go Extractor (multi-language)
+   - 4b.2 TypeScript Extractor
+   - 4f.1 Flask & Express (common frameworks)
 
-Recommended order:
-1. **4a.1** - Base Types & Patterns (defines ServiceCall, PatternMatcher, LanguageExtractor)
-2. **4a.2** - Python HTTP Extractor (first language implementation)
-3. **4c.1** - Registry Protocol & InMemory (needed for linking)
-4. **4e.1** - Call Linker (ties extraction to registry)
-5. Continue with remaining sub-phases
+### Optional for MVP
 
----
-
-## Test Commands
-
-```bash
-# Verify prerequisites
-uv run python -c "from rag.core.types import *; from rag.chunking import *; from rag.scrubbing import *; from rag.indexing import *; print('All prerequisites OK')"
-
-# Run all existing tests
-uv run pytest tests/ -v
-
-# Future Phase 4 tests (once implemented)
-uv run pytest tests/test_phase4/ -v
-```
+The following can be deferred post-MVP:
+- 4a.3 Python gRPC & Queue (specialized patterns)
+- 4b.3 C# Extractor (less common in microservices)
+- 4f.2 Gin & ASP.NET (less common frameworks)
 
 ---
 
 ## Conclusion
 
-Phase 4 is **ready to begin**. The prerequisite phases (0-3) have complete, working implementations with passing tests. The primary housekeeping items are:
+Phase 4 is **33% complete** (4/12 tasks). The core extraction and linking pipeline works end-to-end for Python HTTP calls. The remaining work focuses on:
 
-1. Update task completion markers in Phase 2 and Phase 3 task.md files
-2. Create the missing Phase 4 task definition files (or proceed with available files)
+1. **Persistence**: SQLite registry for production use
+2. **Route extraction**: FastAPI decorator parsing
+3. **Multi-language**: Go and TypeScript extractors
+4. **Framework patterns**: Flask, Express support
 
-**Estimated effort:** Phase 4 is the largest phase (~750 lines across 6 sub-phases). With existing task definitions covering the core components (base types, Python extractor, registry, linker), implementation can begin immediately.
+**MVP Path**: Tasks 4c.2 (SQLite) and 4d.1 (FastAPI) are the highest priority for a working MVP that can extract and link Python microservice calls.
