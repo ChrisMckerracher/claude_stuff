@@ -11,6 +11,9 @@ from rag.extractors.base import (
     ServiceCall,
 )
 from rag.extractors.languages.python import PythonExtractor
+from rag.extractors.languages.go import GoExtractor
+from rag.extractors.languages.typescript import TypeScriptExtractor
+from rag.extractors.languages.csharp import CSharpExtractor
 from rag.extractors.patterns import (
     determine_confidence,
     extract_service_from_url,
@@ -20,6 +23,7 @@ from rag.extractors.registry import (
     InMemoryRegistry,
     RouteDefinition,
     RouteRegistry,
+    SQLiteRegistry,
 )
 from rag.extractors.linker import (
     CallLinker,
@@ -32,13 +36,21 @@ __all__ = [
     "ServiceCall",
     "PatternMatcher",
     "LanguageExtractor",
+    # Language extractors
     "PythonExtractor",
+    "GoExtractor",
+    "TypeScriptExtractor",
+    "CSharpExtractor",
+    # Pattern utilities
     "extract_service_from_url",
     "determine_confidence",
     "is_in_comment_or_docstring",
+    # Registry
     "RouteDefinition",
     "RouteRegistry",
     "InMemoryRegistry",
+    "SQLiteRegistry",
+    # Linker
     "CallLinker",
     "LinkResult",
     "ServiceRelation",
