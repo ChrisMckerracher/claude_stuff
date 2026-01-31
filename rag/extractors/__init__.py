@@ -10,7 +10,11 @@ from rag.extractors.base import (
     PatternMatcher,
     ServiceCall,
 )
-from rag.extractors.languages.python import PythonExtractor
+from rag.extractors.languages.python import (
+    PythonExtractor,
+    PythonGrpcPattern,
+    PythonQueuePattern,
+)
 from rag.extractors.languages.go import GoExtractor
 from rag.extractors.languages.typescript import TypeScriptExtractor
 from rag.extractors.languages.csharp import CSharpExtractor
@@ -30,6 +34,13 @@ from rag.extractors.linker import (
     LinkResult,
     ServiceRelation,
 )
+from rag.extractors.routes import (
+    FastAPIRouteExtractor,
+    FlaskRouteExtractor,
+    ExpressRouteExtractor,
+    GinRouteExtractor,
+    AspNetRouteExtractor,
+)
 
 __all__ = [
     "Confidence",
@@ -41,6 +52,15 @@ __all__ = [
     "GoExtractor",
     "TypeScriptExtractor",
     "CSharpExtractor",
+    # Python patterns (4a.3)
+    "PythonGrpcPattern",
+    "PythonQueuePattern",
+    # Route extractors (4d, 4f)
+    "FastAPIRouteExtractor",
+    "FlaskRouteExtractor",
+    "ExpressRouteExtractor",
+    "GinRouteExtractor",
+    "AspNetRouteExtractor",
     # Pattern utilities
     "extract_service_from_url",
     "determine_confidence",
