@@ -27,8 +27,8 @@
 ## Tasks
 
 ### 4a: Python Call Extraction
-- [ ] [Task 4a.1: Base Types & Patterns](task4a_1.md)
-- [ ] [Task 4a.2: Python HTTP Extractor](task4a_2.md)
+- [x] [Task 4a.1: Base Types & Patterns](task4a_1.md)
+- [x] [Task 4a.2: Python HTTP Extractor](task4a_2.md)
 - [ ] [Task 4a.3: Python gRPC & Queue Patterns](task4a_3.md)
 
 ### 4b: Multi-Language Extraction
@@ -37,14 +37,14 @@
 - [ ] [Task 4b.3: C# Extractor](task4b_3.md)
 
 ### 4c: Route Registry
-- [ ] [Task 4c.1: Registry Protocol & InMemory](task4c_1.md)
+- [x] [Task 4c.1: Registry Protocol & InMemory](task4c_1.md)
 - [ ] [Task 4c.2: SQLite Registry](task4c_2.md)
 
 ### 4d: FastAPI Route Extraction
 - [ ] [Task 4d.1: FastAPI Pattern](task4d_1.md)
 
 ### 4e: Call Linker
-- [ ] [Task 4e.1: Call Linker Implementation](task4e_1.md)
+- [x] [Task 4e.1: Call Linker Implementation](task4e_1.md)
 
 ### 4f: Other Framework Patterns
 - [ ] [Task 4f.1: Flask & Express Patterns](task4f_1.md)
@@ -53,10 +53,10 @@
 ## Verification Checklist
 
 ### Phase 4a Done
-- [ ] Python HTTP calls detected (requests, httpx, aiohttp)
-- [ ] Confidence levels correct (HIGH/MEDIUM/LOW)
-- [ ] Comments and docstrings ignored
-- [ ] Quick check: `python -c "from rag.extractors import PythonExtractor; ..."`
+- [x] Python HTTP calls detected (requests, httpx, aiohttp)
+- [x] Confidence levels correct (HIGH/MEDIUM/LOW)
+- [x] Comments and docstrings ignored
+- [x] Quick check: `python -c "from rag.extractors import PythonExtractor; ..."`
 
 ### Phase 4b Done
 - [ ] Go HTTP calls detected (http.Get, client.Do)
@@ -64,17 +64,17 @@
 - [ ] C# calls detected (HttpClient)
 
 ### Phase 4c Done
-- [ ] RouteRegistry protocol defined
+- [x] RouteRegistry protocol defined
 - [ ] SQLiteRegistry persists routes
-- [ ] find_route_by_request matches parameterized paths
+- [x] find_route_by_request matches parameterized paths
 
 ### Phase 4d Done
 - [ ] FastAPI @router.get/post decorators detected
 - [ ] Route path and handler function extracted
 
 ### Phase 4e Done
-- [ ] CallLinker links calls to handlers
-- [ ] Miss reasons tracked (no_routes, method_mismatch, path_mismatch)
+- [x] CallLinker links calls to handlers
+- [x] Miss reasons tracked (no_routes, method_mismatch, path_mismatch)
 
 ### Phase 4f Done
 - [ ] Flask, Gin, Express, ASP.NET patterns work

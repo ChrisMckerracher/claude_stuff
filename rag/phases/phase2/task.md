@@ -31,19 +31,19 @@ The scrubber uses a **pluggable NLP backend** design. See [NLP_BACKENDS.md](../.
 
 ## Tasks
 
-- [ ] [Task 1: NLP Backend](task1.md) - Pluggable analyzer factory
-- [ ] [Task 2: Pseudonymizer](task2.md) - Consistent fake data
-- [ ] [Task 3: Scrubber Core](task3.md) - Main scrubbing logic
+- [x] [Task 1: NLP Backend](task1.md) - Pluggable analyzer factory
+- [x] [Task 2: Pseudonymizer](task2.md) - Consistent fake data
+- [x] [Task 3: Scrubber Core](task3.md) - Main scrubbing logic
 
 ## Verification Checklist
 
-- [ ] Regex mode detects EMAIL, PHONE, SSN without model download
-- [ ] Pseudonymization is deterministic (same input -> same output)
-- [ ] Audit log captures what was replaced
-- [ ] Code identifiers NOT scrubbed (function names, variable names)
-- [ ] Tests with synthetic PII pass
-- [ ] spaCy can be enabled via `backend="spacy"` parameter
-- [ ] NLP_BACKENDS.md documents how to add spaCy later
+- [x] Regex mode detects EMAIL, PHONE, SSN without model download
+- [x] Pseudonymization is deterministic (same input -> same output)
+- [x] Audit log captures what was replaced
+- [x] Code identifiers NOT scrubbed (function names, variable names)
+- [x] Tests with synthetic PII pass
+- [x] spaCy can be enabled via `backend="spacy"` parameter
+- [x] NLP_BACKENDS.md documents how to add spaCy later
 
 ## Quick Check (Regex Mode)
 

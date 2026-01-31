@@ -17,17 +17,17 @@
 
 ## Tasks
 
-- [ ] [Task 1: LanceDB Store Implementation](task1.md)
-- [ ] [Task 2: Embedder Implementation](task2.md)
+- [x] [Task 1: LanceDB Store Implementation](task1.md)
+- [x] [Task 2: Embedder Implementation](task2.md)
 
 ## Verification Checklist
 
-- [ ] LanceStore implements VectorStore protocol
-- [ ] Insert is idempotent (same ID doesn't duplicate)
-- [ ] Search returns results sorted by similarity
-- [ ] Filters work correctly (corpus_type, service_name)
-- [ ] Deletion works
-- [ ] Embedder dimension matches config (768)
+- [x] LanceStore implements VectorStore protocol
+- [x] Insert is idempotent (same ID doesn't duplicate)
+- [x] Search returns results sorted by similarity
+- [x] Filters work correctly (corpus_type, service_name)
+- [x] Deletion works
+- [x] Embedder dimension matches config (768)
 
 ## Quick Check
 
