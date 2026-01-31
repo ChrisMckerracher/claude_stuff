@@ -2,15 +2,15 @@
 
 ## Current Status
 
-**Progress: 4/12 tasks complete (33%)**
-**Tests: 64 passing**
+**Progress: 8/12 tasks complete (67%)**
+**Tests: 128 passing**
 **Last Updated: 2026-01-31**
 
 | Sub-Phase | Status | Notes |
 |-----------|--------|-------|
 | 4a | ⚠️ 2/3 | HTTP done, gRPC/Queue pending |
-| 4b | ⏳ 0/3 | Multi-language not started |
-| 4c | ⚠️ 1/2 | InMemory done, SQLite pending |
+| 4b | ✅ 3/3 | Go, TypeScript, C# extractors complete |
+| 4c | ✅ 2/2 | InMemory + SQLite complete |
 | 4d | ⏳ 0/1 | FastAPI not started |
 | 4e | ✅ 1/1 | Complete |
 | 4f | ⏳ 0/2 | Framework patterns not started |
@@ -49,13 +49,13 @@
 - [ ] Task 4a.3: Python gRPC & Queue Patterns *(task file missing)*
 
 ### 4b: Multi-Language Extraction
-- [ ] Task 4b.1: Go Extractor *(task file missing)*
-- [ ] Task 4b.2: TypeScript Extractor *(task file missing)*
-- [ ] Task 4b.3: C# Extractor *(task file missing)*
+- [x] Task 4b.1: Go Extractor - `extractors/languages/go.py`
+- [x] Task 4b.2: TypeScript Extractor - `extractors/languages/typescript.py`
+- [x] Task 4b.3: C# Extractor - `extractors/languages/csharp.py`
 
 ### 4c: Route Registry
 - [x] [Task 4c.1: Registry Protocol & InMemory](task4c_1.md)
-- [ ] Task 4c.2: SQLite Registry *(task file missing)*
+- [x] Task 4c.2: SQLite Registry - `extractors/registry.py:SQLiteRegistry`
 
 ### 4d: FastAPI Route Extraction
 - [ ] Task 4d.1: FastAPI Pattern *(task file missing)*
@@ -76,13 +76,13 @@
 - [x] Quick check: `python -c "from rag.extractors import PythonExtractor; ..."`
 
 ### Phase 4b Done
-- [ ] Go HTTP calls detected (http.Get, client.Do)
-- [ ] TypeScript calls detected (fetch, axios)
-- [ ] C# calls detected (HttpClient)
+- [x] Go HTTP calls detected (http.Get, http.Post, http.NewRequest)
+- [x] TypeScript calls detected (fetch, axios)
+- [x] C# calls detected (HttpClient.GetAsync, PostAsync, etc.)
 
 ### Phase 4c Done
 - [x] RouteRegistry protocol defined
-- [ ] SQLiteRegistry persists routes
+- [x] SQLiteRegistry persists routes
 - [x] find_route_by_request matches parameterized paths
 
 ### Phase 4d Done
