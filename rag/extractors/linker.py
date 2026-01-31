@@ -1,32 +1,29 @@
-# Task 4e.1: Call Linker Implementation
+"""Call linker for matching service calls to handlers.
 
-**Status:** [ ] Not Started  |  [ ] In Progress  |  [x] Complete
+Links extracted ServiceCalls to RouteDefinitions via RouteRegistry.
+"""
 
-## Objective
+from __future__ import annotations
 
-Implement the CallLinker that matches extracted service calls to their handler routes.
-
-## File
-
-`rag/extractors/linker.py`
-
-## Implementation
-
-```python
 from dataclasses import dataclass
 from typing import Literal
+
 from rag.extractors.base import ServiceCall
-from rag.extractors.registry import RouteRegistry, RouteDefinition
+from rag.extractors.registry import RouteDefinition, RouteRegistry
+
 
 @dataclass
 class ServiceRelation:
     """A resolved call from one file to another."""
+
     source_file: str
     source_line: int
     target_file: str
     target_function: str
     target_line: int
-    relation_type: Literal["HTTP_CALL", "GRPC_CALL", "QUEUE_PUBLISH", "QUEUE_SUBSCRIBE"]
+    relation_type: Literal[
+        "HTTP_CALL", "GRPC_CALL", "QUEUE_PUBLISH", "QUEUE_SUBSCRIBE"
+    ]
     route_path: str | None  # For HTTP calls
 
 
@@ -36,6 +33,7 @@ class LinkResult:
 
     Either relation is set (success) or unlinked_call + miss_reason (failure).
     """
+
     relation: ServiceRelation | None
     unlinked_call: ServiceCall | None
     miss_reason: Literal["no_routes", "method_mismatch", "path_mismatch"] | None
@@ -47,6 +45,7 @@ class LinkResult:
 
     @staticmethod
     def success(relation: ServiceRelation) -> "LinkResult":
+        """Create successful link result."""
         return LinkResult(relation=relation, unlinked_call=None, miss_reason=None)
 
     @staticmethod
@@ -54,6 +53,7 @@ class LinkResult:
         call: ServiceCall,
         reason: Literal["no_routes", "method_mismatch", "path_mismatch"],
     ) -> "LinkResult":
+        """Create failed link result."""
         return LinkResult(relation=None, unlinked_call=call, miss_reason=reason)
 
 
@@ -69,7 +69,7 @@ class CallLinker:
     4. Verify HTTP method case matches (GET vs get)
     """
 
-    def __init__(self, route_registry: RouteRegistry):
+    def __init__(self, route_registry: RouteRegistry) -> None:
         """Initialize with route registry.
 
         Args:
@@ -111,15 +111,17 @@ class CallLinker:
         # Non-HTTP calls (gRPC, queue) - just check service exists
         if routes:
             # Pick first route as representative
-            return LinkResult.success(ServiceRelation(
-                source_file=call.source_file,
-                source_line=call.line_number,
-                target_file=f"{call.target_service}/",
-                target_function="<service>",
-                target_line=0,
-                relation_type=self._call_type_to_relation(call.call_type),
-                route_path=None,
-            ))
+            return LinkResult.success(
+                ServiceRelation(
+                    source_file=call.source_file,
+                    source_line=call.line_number,
+                    target_file=f"{call.target_service}/",
+                    target_function="<service>",
+                    target_line=0,
+                    relation_type=self._call_type_to_relation(call.call_type),
+                    route_path=None,
+                )
+            )
 
         return LinkResult.failure(call, "no_routes")
 
@@ -171,80 +173,12 @@ class CallLinker:
         call_type: str,
     ) -> Literal["HTTP_CALL", "GRPC_CALL", "QUEUE_PUBLISH", "QUEUE_SUBSCRIBE"]:
         """Convert call_type to relation_type."""
-        mapping = {
+        mapping: dict[
+            str, Literal["HTTP_CALL", "GRPC_CALL", "QUEUE_PUBLISH", "QUEUE_SUBSCRIBE"]
+        ] = {
             "http": "HTTP_CALL",
             "grpc": "GRPC_CALL",
             "queue_publish": "QUEUE_PUBLISH",
             "queue_subscribe": "QUEUE_SUBSCRIBE",
         }
         return mapping.get(call_type, "HTTP_CALL")
-```
-
-## Tests
-
-```python
-@pytest.fixture
-def registry():
-    r = InMemoryRegistry()
-    r.add_routes('user-service', [
-        RouteDefinition('user-service', 'GET', '/api/users/{id}', 'user_ctrl.py', 'get_user', 10),
-        RouteDefinition('user-service', 'POST', '/api/users', 'user_ctrl.py', 'create_user', 20),
-    ])
-    r.add_routes('billing-service', [
-        RouteDefinition('billing-service', 'POST', '/charge', 'billing.py', 'charge', 5),
-    ])
-    return r
-
-@pytest.fixture
-def linker(registry):
-    return CallLinker(registry)
-
-def test_links_exact_match(linker):
-    call = ServiceCall('auth.py', 'user-service', 'http', 5, 0.9, 'GET', '/api/users/123', None)
-    result = linker.link(call)
-    assert result.linked
-    assert result.relation.target_function == 'get_user'
-    assert result.relation.target_file == 'user-service/user_ctrl.py'
-
-def test_no_routes_reason(linker):
-    call = ServiceCall('auth.py', 'unknown-service', 'http', 5, 0.9, 'GET', '/api', None)
-    result = linker.link(call)
-    assert not result.linked
-    assert result.miss_reason == 'no_routes'
-    assert result.unlinked_call == call
-
-def test_method_mismatch_reason(linker):
-    call = ServiceCall('auth.py', 'user-service', 'http', 5, 0.9, 'DELETE', '/api/users/123', None)
-    result = linker.link(call)
-    assert not result.linked
-    assert result.miss_reason == 'method_mismatch'
-
-def test_path_mismatch_reason(linker):
-    call = ServiceCall('auth.py', 'user-service', 'http', 5, 0.9, 'GET', '/api/orders', None)
-    result = linker.link(call)
-    assert not result.linked
-    assert result.miss_reason == 'path_mismatch'
-
-def test_link_batch(linker):
-    calls = [
-        ServiceCall('auth.py', 'user-service', 'http', 5, 0.9, 'GET', '/api/users/1', None),
-        ServiceCall('auth.py', 'billing-service', 'http', 10, 0.9, 'POST', '/charge', None),
-    ]
-    results = linker.link_batch(calls)
-    assert len(results) == 2
-    assert all(r.linked for r in results)
-```
-
-## Acceptance Criteria
-
-- [ ] LinkResult tracks success/failure with reason
-- [ ] CallLinker uses RouteRegistry for matching
-- [ ] no_routes returned for unknown services
-- [ ] method_mismatch returned for wrong HTTP method
-- [ ] path_mismatch returned for unmatched paths
-- [ ] Batch linking works
-- [ ] ServiceRelation includes all relevant fields
-
-## Estimated Time
-
-35 minutes

@@ -1,6 +1,6 @@
 # Task 4a.2: Python HTTP Extractor
 
-**Status:** [ ] Not Started  |  [ ] In Progress  |  [ ] Complete
+**Status:** [ ] Not Started  |  [ ] In Progress  |  [x] Complete
 
 ## Objective
 

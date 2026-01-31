@@ -1,30 +1,24 @@
-# Task 4c.1: Registry Protocol & InMemory Implementation
+"""Route registry for storing and querying route definitions.
 
-**Status:** [ ] Not Started  |  [ ] In Progress  |  [x] Complete
+Provides RouteRegistry protocol and InMemoryRegistry implementation.
+"""
 
-## Objective
+from __future__ import annotations
 
-Define the RouteRegistry protocol and provide an in-memory implementation for testing.
-
-## File
-
-`rag/extractors/registry.py`
-
-## Implementation
-
-```python
-from typing import Protocol, Literal
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
+from typing import Literal, Protocol
+
 
 @dataclass
 class RouteDefinition:
     """A route defined in a service."""
+
     service: str
     method: Literal["GET", "POST", "PUT", "DELETE", "PATCH"]
-    path: str                    # /api/users/{user_id}
-    handler_file: str            # src/controllers/user_controller.py
-    handler_function: str        # get_user
+    path: str  # /api/users/{user_id}
+    handler_file: str  # src/controllers/user_controller.py
+    handler_function: str  # get_user
     line_number: int
 
 
@@ -69,13 +63,15 @@ class RouteRegistry(Protocol):
 class InMemoryRegistry:
     """In-memory RouteRegistry for testing."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._routes: dict[str, list[RouteDefinition]] = {}
 
     def add_routes(self, service: str, routes: list[RouteDefinition]) -> None:
+        """Store routes for a service."""
         self._routes[service] = routes
 
     def get_routes(self, service: str) -> list[RouteDefinition]:
+        """Get all routes for a service."""
         return self._routes.get(service, [])
 
     def find_route_by_request(
@@ -84,6 +80,7 @@ class InMemoryRegistry:
         method: str,
         request_path: str,
     ) -> RouteDefinition | None:
+        """Find route matching an HTTP request."""
         routes = self.get_routes(service)
         if not routes:
             return None
@@ -92,7 +89,7 @@ class InMemoryRegistry:
         request_path = self._normalize_path(request_path)
 
         # Find matching routes
-        matches = []
+        matches: list[RouteDefinition] = []
         for route in routes:
             if route.method.upper() != method.upper():
                 continue
@@ -115,21 +112,30 @@ class InMemoryRegistry:
 
         Pattern: /api/users/{user_id}
         Request: /api/users/123
-        → True
-
-        Also matches trailing segments:
-        Pattern: /api/users/{id}
-        Request: /api/users/123/orders
-        → True (user resource with extension)
+        -> True
         """
         pattern = pattern.rstrip("/") or "/"
+        request_path = request_path.rstrip("/") or "/"
 
-        # Convert {param} to regex
-        regex = re.sub(r'\{[^}]+\}', r'[^/]+', re.escape(pattern))
-        regex = regex.replace(r'\[^/\]+', '[^/]+')  # Fix escaped brackets
+        # Split into segments
+        pattern_parts = pattern.split("/")
+        request_parts = request_path.split("/")
 
-        # Allow trailing path segments
-        return re.match(f"^{regex}(?:/.*)?$", request_path) is not None
+        # Must have same number of segments for exact match
+        if len(pattern_parts) != len(request_parts):
+            return False
+
+        # Match each segment
+        for p_part, r_part in zip(pattern_parts, request_parts):
+            if p_part.startswith("{") and p_part.endswith("}"):
+                # Parameter segment - matches any non-empty value
+                if not r_part:
+                    return False
+            elif p_part != r_part:
+                # Literal segment must match exactly
+                return False
+
+        return True
 
     def _most_specific(
         self,
@@ -140,6 +146,7 @@ class InMemoryRegistry:
 
         Specificity: More literal segments = more specific
         """
+
         def specificity(route: RouteDefinition) -> tuple[int, int]:
             # Count literal vs parameterized segments
             segments = route.path.strip("/").split("/")
@@ -150,85 +157,12 @@ class InMemoryRegistry:
         return max(routes, key=specificity)
 
     def all_services(self) -> list[str]:
+        """List all services with routes."""
         return list(self._routes.keys())
 
     def clear(self, service: str | None = None) -> None:
+        """Clear routes."""
         if service:
             self._routes.pop(service, None)
         else:
             self._routes.clear()
-```
-
-## Tests
-
-```python
-def test_exact_path_match():
-    registry = InMemoryRegistry()
-    registry.add_routes('svc', [
-        RouteDefinition('svc', 'GET', '/api/users', 'h.py', 'list_users', 1)
-    ])
-    route = registry.find_route_by_request('svc', 'GET', '/api/users')
-    assert route is not None
-    assert route.handler_function == 'list_users'
-
-def test_parameterized_path():
-    registry = InMemoryRegistry()
-    registry.add_routes('svc', [
-        RouteDefinition('svc', 'GET', '/api/users/{id}', 'h.py', 'get_user', 1)
-    ])
-    route = registry.find_route_by_request('svc', 'GET', '/api/users/123')
-    assert route is not None
-    assert route.handler_function == 'get_user'
-
-def test_trailing_slash():
-    registry = InMemoryRegistry()
-    registry.add_routes('svc', [
-        RouteDefinition('svc', 'GET', '/api/users/{id}', 'h.py', 'get', 1)
-    ])
-    route = registry.find_route_by_request('svc', 'GET', '/api/users/123/')
-    assert route is not None
-
-def test_query_params_stripped():
-    registry = InMemoryRegistry()
-    registry.add_routes('svc', [
-        RouteDefinition('svc', 'GET', '/api/users/{id}', 'h.py', 'get', 1)
-    ])
-    route = registry.find_route_by_request('svc', 'GET', '/api/users/123?include=orders')
-    assert route is not None
-
-def test_exact_beats_parameterized():
-    registry = InMemoryRegistry()
-    registry.add_routes('svc', [
-        RouteDefinition('svc', 'GET', '/api/users/me', 'h.py', 'get_me', 1),
-        RouteDefinition('svc', 'GET', '/api/users/{id}', 'h.py', 'get_user', 2),
-    ])
-    route = registry.find_route_by_request('svc', 'GET', '/api/users/me')
-    assert route.handler_function == 'get_me'
-
-def test_method_mismatch():
-    registry = InMemoryRegistry()
-    registry.add_routes('svc', [
-        RouteDefinition('svc', 'GET', '/api/users', 'h.py', 'list', 1)
-    ])
-    route = registry.find_route_by_request('svc', 'POST', '/api/users')
-    assert route is None
-
-def test_unknown_service():
-    registry = InMemoryRegistry()
-    route = registry.find_route_by_request('unknown', 'GET', '/api')
-    assert route is None
-```
-
-## Acceptance Criteria
-
-- [ ] RouteRegistry protocol defined
-- [ ] RouteDefinition dataclass complete
-- [ ] InMemoryRegistry implements protocol
-- [ ] Path matching handles {param} patterns
-- [ ] Query params stripped before matching
-- [ ] Trailing slashes handled
-- [ ] Most specific route wins collisions
-
-## Estimated Time
-
-35 minutes
