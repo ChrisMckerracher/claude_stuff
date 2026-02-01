@@ -102,10 +102,125 @@ Draft product briefs OR validate architect designs.
 
 **Output:** Product brief OR validation report (always to structured files)
 
+### Spec Mode
+Write Gherkin feature specs for upcoming features. Feature specs define behavior before architecture, allowing QA to review specs like Code Review reviews designs.
+
+**Process:**
+1. Gather requirements from user conversation
+2. Identify user personas and their goals
+3. Draft scenarios covering:
+   - Happy paths (primary success scenarios)
+   - Alternative paths (valid variations)
+   - Error paths (invalid inputs, failures)
+   - Edge cases (boundaries, limits)
+4. Write spec to `docs/specs/features/<feature-name>.feature`
+5. **GATE: Spec Review** - Spawn QA Agent for review:
+   ```
+   Task(
+     subagent_type: "agent-ecosystem:qa",
+     prompt: "Review feature spec: docs/specs/features/<feature-name>.feature"
+   )
+   ```
+6. If QA requests changes, iterate on the spec
+7. If QA approves, inform user spec is ready for architecture
+
+**Output:** Feature spec at `docs/specs/features/<feature-name>.feature`
+
+## Gherkin Format Guidelines
+
+Feature specs follow Cucumber/Gherkin syntax for human-readable behavior specifications.
+
+**Structure:**
+```gherkin
+Feature: [Feature Name]
+  As a [user persona]
+  I want [capability]
+  So that [benefit/value]
+
+  Background:
+    Given [shared setup steps]
+
+  Scenario: [Descriptive scenario name]
+    Given [precondition]
+    When [action]
+    Then [expected outcome]
+
+  Scenario Outline: [Parameterized scenario name]
+    When I perform action with "<input>"
+    Then I should see "<result>"
+
+    Examples:
+      | input   | result   |
+      | value1  | output1  |
+      | value2  | output2  |
+```
+
+**Keywords:**
+| Keyword | Purpose |
+|---------|---------|
+| `Feature:` | Top-level description with user story |
+| `Background:` | Shared setup for all scenarios in the feature |
+| `Scenario:` | Single test case with specific inputs/outputs |
+| `Scenario Outline:` | Parameterized scenario with Examples table |
+| `Given` | Preconditions and context setup |
+| `When` | Actions performed by the user |
+| `Then` | Expected outcomes and assertions |
+| `And` / `But` | Additional steps (same type as preceding) |
+
+**Example Feature Spec:**
+```gherkin
+Feature: User Authentication
+  As a user
+  I want to log in securely
+  So that I can access my account
+
+  Background:
+    Given the authentication service is running
+    And I am on the login page
+
+  Scenario: Successful login with valid credentials
+    Given I have a registered account
+    When I enter my email "user@example.com"
+    And I enter my password "correct-password"
+    And I click the login button
+    Then I should be redirected to the dashboard
+    And I should see a welcome message
+
+  Scenario: Failed login with invalid password
+    Given I have a registered account
+    When I enter my email "user@example.com"
+    And I enter my password "wrong-password"
+    And I click the login button
+    Then I should see an error message "Invalid credentials"
+    And I should remain on the login page
+
+  Scenario Outline: Login validation
+    When I enter my email "<email>"
+    And I enter my password "<password>"
+    And I click the login button
+    Then I should see "<result>"
+
+    Examples:
+      | email              | password | result                    |
+      |                    | pass123  | Email is required         |
+      | invalid-email      | pass123  | Invalid email format      |
+      | user@example.com   |          | Password is required      |
+```
+
+**Best Practices:**
+- Write from the user's perspective, not implementation details
+- Keep scenarios focused on one behavior each
+- Use concrete examples in scenarios, parameterize with Scenario Outline
+- Avoid technical jargon; use business language
+- Cover happy paths first, then errors and edge cases
+
+**Note:** Feature specs are documentation for human review, not executable tests. QA Agent references specs when writing actual test files; Coding Agent references specs to understand expected behavior.
+
 ## File Locations
 
 | Type | Path | Purpose |
 |------|------|---------|
+| Feature Specs | `docs/specs/features/<feature>.feature` | Gherkin behavior specifications |
 | Product Briefs | `docs/plans/product/briefs/<feature>.md` | PRDs defining WHAT and WHY |
 | Validation Reports | `docs/plans/product/validations/<feature>.md` | Design review records |
 | Architect Designs | `docs/plans/architect/<feature>.md` | Technical designs to validate |
