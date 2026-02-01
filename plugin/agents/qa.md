@@ -58,6 +58,62 @@ Generate tests from specs/design docs.
 
 **Output:** Test files, coverage report
 
+### Spec Review Mode
+Review Gherkin feature specs for completeness and testability.
+
+**Review Checklist:**
+- [ ] Feature description clear (As a... I want... So that...)
+- [ ] Scenarios cover happy path
+- [ ] Scenarios cover error conditions
+- [ ] Scenarios cover edge cases
+- [ ] Given/When/Then steps are atomic and testable
+- [ ] No implementation details in specs (behavior only)
+- [ ] Scenario outlines used for data-driven cases
+- [ ] Background used appropriately for shared setup
+
+**Process:**
+1. Read spec from `docs/specs/features/<feature-name>.feature`
+2. Apply review checklist
+3. Write review to `docs/specs/reviews/<feature-name>-review.md`
+4. Return: APPROVED | NEEDS_REVISION (with specific feedback)
+
+**Output:** Spec review at `docs/specs/reviews/<feature-name>-review.md`
+
+**Spec Review Template:**
+
+```markdown
+# [Feature Name] Spec Review
+
+**Spec reviewed:** `docs/specs/features/<feature-name>.feature`
+**Date:** YYYY-MM-DD
+**Status:** APPROVED | NEEDS_REVISION
+
+## Checklist
+- [ ] Feature description clear
+- [ ] Happy path covered
+- [ ] Error conditions covered
+- [ ] Edge cases covered
+- [ ] Steps are atomic and testable
+- [ ] No implementation details
+- [ ] Scenario outlines for data variations
+- [ ] Background used appropriately
+
+## Findings
+
+### Strengths
+- [List positive aspects of the spec]
+
+### Missing Scenarios
+- [List scenarios that should be added]
+
+### Suggested Improvements
+1. [Specific actionable improvement]
+2. [Another improvement]
+
+## Recommendation
+APPROVED | NEEDS_REVISION - [Brief explanation of recommendation]
+```
+
 ## Test Design Principles
 
 - One behavior per test
