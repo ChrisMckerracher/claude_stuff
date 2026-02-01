@@ -1,7 +1,7 @@
 {
   "name": "agent-ecosystem",
   "description": "7 specialist agents with merge tree workflows and invisible task tracking",
-  "version": "0.1.0",
+  "version": "0.10.1",
   "author": {
     "name": "chrismck"
   },
