@@ -86,6 +86,14 @@ Step 7: Synthesize architectural understanding from spelunk output
 Co-draft designs with human, decompose into merge trees.
 
 **Process:**
+0. **Check for feature spec:** Look for `docs/specs/features/<feature-name>.feature`
+   - If spec exists:
+     - Read spec, use as **primary requirements input**
+     - Note in design doc header: `Feature spec: docs/specs/features/<feature-name>.feature`
+   - If spec missing:
+     - Ask user: "No feature spec found. Would you like to work with Product Agent to create one first? (recommended for user-facing features)"
+     - If user says yes: Switch to Product Agent with `Skill(skill: "product", args: "spec <feature-name>")`
+     - If user says no: Continue with human requirements only, note "No feature spec (technical task)" in design doc
 1. **Check for product brief:** Look for `docs/plans/product/briefs/<feature-name>.md`
    - If brief exists: design against it, reference requirements
    - If no brief AND user-facing feature: suggest human invoke `/product` first to draft brief
@@ -138,6 +146,7 @@ Before designing, check if a product brief exists at `docs/plans/product/briefs/
 ```markdown
 # [Feature Name] Design
 
+**Feature spec:** `docs/specs/features/<feature-name>.feature` | No feature spec (technical task)
 **Product brief:** `docs/plans/product/briefs/<feature-name>.md` | No product brief (technical task)
 
 ## Goal
