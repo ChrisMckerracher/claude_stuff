@@ -230,39 +230,56 @@ Track merge tree state via beads. Report progress in plain language.
 
 ## Worktree-Aware Delegation
 
-When delegating tasks to Coding Agent, include worktree context:
+When delegating tasks to Coding Agent, include worktree context.
 
 ### Worktree Structure
 
 ```
-{checked-out branch}              # Merge target for epics
+{project_root}/
 └── .worktrees/
-    ├── {epic-id}/                # Epic worktree (branch: epic/{epic-id})
-    └── {task-id}/                # Task worktree (branch: task/{task-id})
+    ├── {epic-id}/           # Epic worktree (branch: epic/{epic-id})
+    ├── {task-id-1}/         # Task worktree (branch: task/{task-id-1})
+    └── {task-id-2}/         # Task worktree (branch: task/{task-id-2})
 ```
 
 ### Merge Topology
 
 ```
-task/{id} → epic/{epic-id} → {checked-out branch}
+task/{id} → epic/{epic-id} → {active-branch}
 ```
 
 The active branch (merge target) is stored as a label on the epic bead.
 
+### Task Worktree Lifecycle
+
+| Task State | Worktree Exists? | When Created |
+|------------|------------------|--------------|
+| Unblocked (no deps) | Yes | Immediately at decompose |
+| Blocked (has deps) | No | After ALL blockers merge to epic |
+| Completed | No | Removed after merge |
+
+**Key insight:** Blocked tasks get their worktree AFTER dependencies merge, so they branch from the updated epic HEAD (containing all merged work).
+
+### Design Doc Retrieval
+
+Design docs are stored in the bead's `--design` field:
+
+```bash
+bd show {task-id} --json | jq -r '.design'
+```
+
 ### Delegation Context
 
-When spawning Coding Agent, include:
-- Task ID
-- Architecture doc reference (from task description)
-- Expected worktree path
+When spawning Coding Agent:
 
-**Example delegation:**
 ```
 Task(
   subagent_type: "agent-ecosystem:coding",
-  prompt: "/code {task-id}
-
-Architecture doc: docs/plans/architect/{feature}.md
-Worktree: .worktrees/{task-id}/"
+  prompt: "/code {task-id}"
 )
 ```
+
+The Coding Agent will:
+1. Navigate to `.worktrees/{task-id}/`
+2. Retrieve design doc from bead
+3. Implement and merge to epic
