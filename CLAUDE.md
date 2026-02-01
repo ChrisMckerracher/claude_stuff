@@ -111,6 +111,8 @@ Fallback chain: LSP -> AST (ast-grep/semgrep) -> Grep
 | `docs/plans/architect/` | Architecture design documents |
 | `docs/spelunk/` | Generated codebase exploration docs |
 | `docs/spelunk/_staleness.json` | Hash validation for spelunk docs |
+| `docs/specs/features/` | Gherkin feature specs (BDD) |
+| `docs/specs/reviews/` | QA spec review reports |
 
 ## Task Tracking with Beads
 
@@ -163,8 +165,8 @@ Work is NOT complete until `git push` succeeds.
 
 ### Start New Feature
 ```
-/architect          # Co-design with human
-/product            # Validate design
+/product            # Write feature spec (optional, recommended for user-facing)
+/architect          # Co-design with human (checks for spec first)
 /decompose          # Create task tree
 /visualize          # See what's ready
 ```
