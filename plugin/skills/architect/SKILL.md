@@ -107,3 +107,23 @@ Step 5: Synthesize architecture analysis from spelunk output
 ## Authority
 
 Architecture Agent has highest authority below human. Other agents wait for design approval before engaging.
+
+## Design Doc Linkage
+
+When decomposing features, store the design doc path in the bead's `--design` field:
+
+```bash
+# At epic creation
+bd create "Epic: Feature" -t epic --design="docs/plans/architect/feature.md" ...
+
+# Tasks inherit from epic
+epic_design=$(bd show "$epic_id" --json | jq -r '.design')
+bd create "Task" -t task --design="$epic_design" ...
+```
+
+Agents retrieve design docs via:
+```bash
+design_path=$(bd show {task-id} --json | jq -r '.design // empty')
+```
+
+This replaces embedding the path in description text - it's now a first-class field.

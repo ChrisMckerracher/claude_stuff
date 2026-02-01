@@ -11,98 +11,113 @@ Invoke the Coding Agent.
 
 `/code` - Start implementing next ready task
 `/code examine` - Analyze code relationships and patterns
-`/code <task-description>` - Implement specific task
+`/code <task-id>` - Implement specific task
 
-## Worktree Awareness
+## Worktree Flow
 
-Before starting work on a task:
+### Before Implementation
 
-1. **Derive epic root from task ID**
+1. **Check task is ready:**
    ```bash
-   epic_root="${task_id%%.*}"  # e.g., bd-a3f8.2.1 -> bd-a3f8
+   bd show {task-id} --json
+   # Check status is "open" and blocked_by is empty
    ```
 
-2. **Find project root** (works from any worktree or main repo)
+2. **Navigate to task worktree:**
    ```bash
-   project_root=$(dirname "$(git rev-parse --git-common-dir)")
+   project_root=$(git rev-parse --show-toplevel)
+   cd "${project_root}/.worktrees/{task-id}/"
    ```
 
-3. **Check for worktree and navigate**
+3. **Verify correct branch:**
    ```bash
-   if [[ -d "${project_root}/.worktrees/${epic_root}" ]]; then
-     # Work in the epic's worktree
-     cd "${project_root}/.worktrees/${epic_root}"
-   fi
+   git branch --show-current
+   # Should show: task/{task-id}
    ```
 
-4. **Create or switch to task branch**
+4. **If worktree doesn't exist:**
+   - Check if task is blocked: `bd show {task-id} --json | jq '.blocked_by'`
+   - If blocked: STOP - wait for blockers to complete
+   - If unblocked but missing worktree: create it (see /decompose)
+
+5. **Retrieve design doc:**
    ```bash
-   git checkout "epic/${epic_root}/${task_id}" 2>/dev/null || \
-     git checkout -b "epic/${epic_root}/${task_id}" "epic/${epic_root}"
+   design_doc=$(bd show {task-id} --json | jq -r '.design // empty')
+   # Read the design doc for implementation guidance
    ```
 
-5. **Run bd commands from project root**
+6. **Claim task:**
    ```bash
-   bd --cwd "${project_root}" update ${task_id} --status in_progress
+   bd update {task-id} --status in_progress
    ```
 
-6. **Complete task using task-complete.sh**
-   ```bash
-   # When implementation and tests pass:
-   ${CLAUDE_PLUGIN_ROOT}/plugin/scripts/task-complete.sh ${task_id}
-   ```
+### Task Completion
+
+After implementation and tests pass:
+
+```bash
+project_root=$(git rev-parse --show-toplevel)
+epic_id="${task_id%%.*}"  # Extract epic root from task ID
+
+# 1. Commit work in task worktree
+cd "${project_root}/.worktrees/${task_id}"
+git add -A
+git commit -m "Complete ${task_id}: <description>"
+
+# 2. Switch epic worktree to epic branch
+cd "${project_root}/.worktrees/${epic_id}"
+git checkout "epic/${epic_id}"
+
+# 3. Merge task to epic
+git merge --no-ff "task/${task_id}" -m "Merge ${task_id}"
+# If conflict: try to resolve it. If too gnarly, ask human.
+
+# 4. Cleanup task worktree and branch
+cd "$project_root"
+git worktree remove ".worktrees/${task_id}"
+git branch -d "task/${task_id}"
+
+# 5. Check for newly unblocked tasks - create their worktrees
+# (Tasks that were blocked only by this task)
+
+# 6. Close task bead
+bd close "${task_id}" --reason "Merged to epic"
+```
 
 ## What Happens
 
 1. Coding Agent activates with TDD workflow
-2. Claims task from ready queue
-3. Writes tests first, then implementation
-4. On completion, `task-complete.sh`:
-   - Commits work on task branch
-   - Merges task branch to epic branch
-   - Rebases all dependent task branches
-   - Closes the task bead
-   - Reports what was merged/rebased
+2. Navigates to task worktree
+3. Retrieves design doc from bead
+4. Writes tests first, then implementation
+5. On completion: merges to epic, creates worktrees for unblocked tasks
 
 **REQUIRED SUB-SKILL:** superpowers:test-driven-development
 
-## Task Completion Workflow
+## Merge Conflicts
 
-When completing a task, use `/task-complete <task_id>` or call `task-complete.sh` directly:
-
-```bash
-# From within the epic worktree
-task-complete.sh claude_stuff-abc.1
-```
-
-This replaces the manual `bd close` step with automatic:
-- Merge to epic branch
-- Dependent task rebase
-- Bead closure
-
-If merge conflicts occur, resolve them in the worktree and re-run the command.
+If merge conflict occurs:
+- Try to resolve it (most are straightforward)
+- If too gnarly or unclear, ask human for help
 
 ## Examples
 
-### Complete a task with automatic merge
+### Implement a task
 
 ```bash
 /code claude_stuff-abc.1
-# ... agent implements task ...
-# On completion, runs:
-task-complete.sh claude_stuff-abc.1
-# Output: {"merged": true, "rebased": ["claude_stuff-abc.2"]}
+
+# Agent:
+# 1. cd .worktrees/claude_stuff-abc.1/
+# 2. Reads design doc from bd show --json | jq '.design'
+# 3. Implements with TDD
+# 4. Merges to epic, cleans up worktree
 ```
 
-### Handle merge conflict
+### Task is blocked
 
 ```bash
-task-complete.sh claude_stuff-abc.1
-# ERROR: MERGE CONFLICT
-# cd .worktrees/claude_stuff-abc
-# git status
-# [resolve conflicts]
-# git add resolved-files
-# git commit
-# task-complete.sh claude_stuff-abc.1  # Re-run
+/code claude_stuff-abc.2
+# Agent checks: blocked_by: ["claude_stuff-abc.1"]
+# Response: "Task blocked by claude_stuff-abc.1. Wait for it to complete."
 ```

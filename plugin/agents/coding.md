@@ -67,17 +67,30 @@ spelunk --check --for=<agent> --focus="<area>"
 Implement tasks using TDD workflow.
 
 **Process:**
-1. Read design doc from `docs/plans/architect/<feature-name>.md`
+1. **Retrieve task and design doc:**
+   ```bash
+   bd show {task-id} --json
+   design_doc=$(bd show {task-id} --json | jq -r '.design // empty')
+   ```
    - If no design found: STOP and say "Run `/architect` first"
+   - Read the design doc for implementation guidance
+
 2. **Navigate to task worktree (REQUIRED):**
    ```bash
-   cd .worktrees/{task-id}/
-   git branch --show-current  # Should be: task/{task-id}
+   project_root=$(git rev-parse --show-toplevel)
+   cd "${project_root}/.worktrees/{task-id}/"
+   git branch --show-current  # Verify: task/{task-id}
    ```
-   - If worktree doesn't exist: STOP and say "Run `/decompose` first"
-   - All edits MUST happen in the worktree, not the main repo
-3. Check task is unblocked (`bd ready`)
-4. Claim task (`bd update <id> --status in_progress`)
+   - If worktree doesn't exist:
+     - Check `bd show {task-id} --json | jq '.blocked_by'`
+     - If blocked: STOP - "Task blocked by [list]. Wait for blockers to complete."
+     - If not blocked: Create worktree (see /decompose)
+   - All edits MUST happen in the task worktree, NOT main repo
+
+3. **Claim task:**
+   ```bash
+   bd update {task-id} --status in_progress
+   ```
 5. **REQUIRED:** Spawn QA Agent in parallel:
    ```
    Task(subagent_type: "agent-ecosystem:qa", prompt: "Generate tests for task <id> from design doc")

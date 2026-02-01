@@ -203,9 +203,20 @@ task/{id} → epic/{epic-id} → {checked-out branch}
 | `.worktrees/{task-id}/` | Task worktree (isolated work area) |
 | `active-branch` label on epic | Records the checked-out branch for final merge |
 
-**Design doc linkage:** When decomposing, ensure each task description includes:
-```
-**Architecture doc:** docs/plans/architect/<feature>.md
+### Design Doc Storage in Beads
+
+Design docs are stored in the bead's `--design` field, not description text:
+
+```bash
+# At epic creation
+bd create "Epic: Feature" -t epic --design="docs/plans/architect/feature.md" ...
+
+# Tasks inherit from epic at creation
+epic_design=$(bd show "$epic_id" --json | jq -r '.design')
+bd create "Task" -t task --design="$epic_design" ...
+
+# Any agent retrieves via
+bd show {task-id} --json | jq -r '.design'
 ```
 
 ## Web Search
