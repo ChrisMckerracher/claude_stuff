@@ -112,7 +112,8 @@ Fallback chain: LSP -> AST (ast-grep/semgrep) -> Grep
 | `docs/spelunk/` | Generated codebase exploration docs |
 | `docs/spelunk/_staleness.json` | Hash validation for spelunk docs |
 | `docs/specs/features/` | Gherkin feature specs (BDD) |
-| `docs/specs/reviews/` | QA spec review reports |
+| `tests/e2e/` | Playwright e2e tests generated from specs |
+| `tests/e2e/playwright.config.ts` | Playwright config with video recording |
 
 ## Task Tracking with Beads
 
@@ -165,11 +166,28 @@ Work is NOT complete until `git push` succeeds.
 
 ### Start New Feature
 ```
-/product            # Write feature spec (optional, recommended for user-facing)
-/architect          # Co-design with human (checks for spec first)
+/product spec       # Write Gherkin feature spec (QA reviews)
+/architect          # Co-design with human (reads spec if exists)
 /decompose          # Create task tree
 /visualize          # See what's ready
 ```
+
+### BDD Feature Spec Workflow
+```
+/product spec                    # Product writes Gherkin spec
+                                 # QA reviews (conversational approval)
+/architect                       # Architect reads spec, designs solution
+/decompose                       # Break into tasks
+/code                            # Implement features
+/qa generate-tests <spec-path>   # QA generates Playwright tests from spec
+                                 # Tests run with video recording
+```
+
+Gherkin specs → Playwright tests flow:
+- Given/When/Then → arrange/act/assert
+- Background → beforeEach hook
+- Scenario Outline → parameterized tests
+- Video captured on test retry for debugging
 
 ### Implement Task
 ```
