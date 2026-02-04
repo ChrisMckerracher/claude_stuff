@@ -47,17 +47,64 @@ Based on the argument provided:
 
 ## For New Features (Co-Design)
 
+### Step 0: Check for Feature Spec (REQUIRED)
+
+Before designing, check if a Gherkin feature spec exists:
+
+```
+Glob("docs/specs/features/<feature-name>.feature")
+```
+
+**If spec EXISTS:**
+- Read the spec file
+- Use scenarios as primary requirements input
+- Note in design doc: `**Feature spec:** docs/specs/features/<feature-name>.feature`
+
+**If spec MISSING:**
+- Ask user:
+  > "No feature spec found at `docs/specs/features/<feature-name>.feature`.
+  >
+  > This appears to be a user-facing feature. I recommend running `/product spec`
+  > first to define the expected behavior, then return here for design.
+  >
+  > Alternatively, I can design from our conversation if you prefer to skip
+  > the formal spec (appropriate for technical/internal features).
+  >
+  > How would you like to proceed?"
+- If user wants spec first: They run `/product spec` (human orchestrates)
+- If user wants to proceed without spec: Continue with conversation-based requirements
+- Note in design doc: `**Feature spec:** No feature spec (technical task)`
+
+**Do NOT auto-switch agents.** Human orchestrates between agents.
+
+### Steps 1-7: Design Process
+
 1. Ask clarifying questions about requirements
 2. Explore existing codebase patterns
 3. Propose high-level design with rationale
 4. Iterate based on feedback
-5. Save design doc to `docs/plans/architect/<feature-name>.md`
+5. Save design doc to `docs/plans/architect/<feature-name>.md` (see template below)
 6. **REQUIRED:** Spawn Product Agent for validation:
    ```
    Task(subagent_type: "agent-ecosystem:product", prompt: "Validate design: docs/plans/architect/<feature-name>.md")
    ```
-7. If Product rejects → iterate on design (go to step 3)
-8. If Product approves → use `/decompose` to create task tree
+7. If Product rejects → iterate on design (go to step 3); if approved → use `/decompose`
+
+### Design Doc Template
+
+Design documents MUST include these references at the top:
+
+```markdown
+# [Feature Name] Design
+
+**Feature spec:** `docs/specs/features/<feature-name>.feature` | No feature spec (technical task)
+**Product brief:** `docs/plans/product/briefs/<feature-name>.md` | No product brief (technical task)
+
+## Goal
+...
+```
+
+Include the feature spec path if one exists, or note "No feature spec (technical task)" for internal/technical work.
 
 ## For Examine Mode
 
