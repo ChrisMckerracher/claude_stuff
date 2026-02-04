@@ -80,44 +80,110 @@ Review Gherkin feature specs for completeness and testability.
 **Process:**
 1. Read spec from `docs/specs/features/<feature-name>.feature`
 2. Apply review checklist
-3. Write review to `docs/specs/reviews/<feature-name>-review.md`
-4. Return: APPROVED | NEEDS_REVISION (with specific feedback)
+3. Return in conversation: APPROVED | NEEDS_REVISION (with specific feedback)
+4. No separate review file needed - approval is conversational
 
-**Output:** Spec review at `docs/specs/reviews/<feature-name>-review.md`
+**Output:** Approval status in conversation (no persistent review file)
 
-**Spec Review Template:**
+### Test Generation Mode
+Generate Playwright e2e tests from approved Gherkin specs.
 
-```markdown
-# [Feature Name] Spec Review
+**Invocation:** `/qa generate-tests <spec-path>`
 
-**Spec reviewed:** `docs/specs/features/<feature-name>.feature`
-**Date:** YYYY-MM-DD
-**Status:** APPROVED | NEEDS_REVISION
+**Process:**
+1. Verify spec exists and was approved (check conversation or ask)
+2. Read feature spec from `docs/specs/features/<feature-name>.feature`
+3. Map each Scenario to a Playwright test:
+   - Background -> `beforeEach` hook
+   - Given -> test setup / arrange
+   - When -> user actions / act
+   - Then -> assertions / assert
+   - Scenario Outline -> parameterized test loop
+4. Generate test file at `tests/e2e/<feature-name>.spec.ts`
+5. Configure video recording (on-first-retry default)
+6. Present generated test for human review
 
-## Checklist
-- [ ] Feature description clear
-- [ ] Happy path covered
-- [ ] Error conditions covered
-- [ ] Edge cases covered
-- [ ] Steps are atomic and testable
-- [ ] No implementation details
-- [ ] Scenario outlines for data variations
-- [ ] Background used appropriately
+**Selector Strategy:**
+- Prefer `data-testid` attributes
+- Fall back to accessible roles/labels
+- Flag selectors that need Coding Agent to add test IDs
 
-## Findings
+**Video Configuration:**
+- Enable video recording for visual debugging
+- Retain traces on failure for step-by-step replay
+- Output to `test-results/` directory
 
-### Strengths
-- [List positive aspects of the spec]
+**Output:** Playwright test file at `tests/e2e/<feature-name>.spec.ts`
 
-### Missing Scenarios
-- [List scenarios that should be added]
+**Generated Test Structure Example:**
 
-### Suggested Improvements
-1. [Specific actionable improvement]
-2. [Another improvement]
+```typescript
+// tests/e2e/<feature-name>.spec.ts
+import { test, expect } from '@playwright/test';
 
-## Recommendation
-APPROVED | NEEDS_REVISION - [Brief explanation of recommendation]
+test.describe('Feature Name', () => {
+  test.beforeEach(async ({ page }) => {
+    // From Background:
+    await page.goto('/path');
+  });
+
+  test('Scenario name from spec', async ({ page }) => {
+    // Given step (arrange)
+    // When step (act)
+    await page.fill('[data-testid="field"]', 'value');
+    await page.click('[data-testid="button"]');
+    // Then step (assert)
+    await expect(page).toHaveURL('/expected');
+    await expect(page.locator('[data-testid="element"]')).toBeVisible();
+  });
+
+  // Scenario Outline becomes parameterized test
+  const testCases = [
+    { input: 'value1', expected: 'result1' },
+    { input: 'value2', expected: 'result2' },
+  ];
+
+  for (const { input, expected } of testCases) {
+    test(`Validation: ${expected}`, async ({ page }) => {
+      await page.fill('[data-testid="input"]', input);
+      await page.click('[data-testid="submit"]');
+      await expect(page.locator('.message')).toContainText(expected);
+    });
+  }
+});
+```
+
+**Playwright Config for Video:**
+
+```typescript
+// playwright.config.ts
+export default defineConfig({
+  use: {
+    video: 'on-first-retry', // or 'on' for all tests
+    trace: 'retain-on-failure',
+  },
+  outputDir: 'test-results/',
+});
+```
+
+**Test Generation Boundaries:**
+
+QA Agent generates:
+- Test file structure matching feature scenarios
+- Playwright selectors (using data-testid pattern)
+- Assertions matching Then steps
+- Video/trace configuration
+
+QA Agent does NOT generate:
+- Application code or fixtures
+- Complex test utilities (delegate to Coding Agent)
+- CI/CD pipeline changes
+
+**Handoff to Coding Agent:**
+If generated tests need custom fixtures, page objects, or utilities:
+```
+QA Agent: "Tests generated but need page object for login flow.
+           Handing off to Coding Agent for: tests/e2e/pages/login.page.ts"
 ```
 
 ## Test Design Principles
