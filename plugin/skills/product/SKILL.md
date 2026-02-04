@@ -27,6 +27,7 @@ Any source file reads will produce INVALID analysis.
 If invoked without a subcommand OR with a free-form exploration request:
 
 1. **Detect intent** from the prompt:
+   - Keywords `spec`, `gherkin`, `feature spec`, `behavior spec`, `BDD` → route to `/product spec` workflow
    - Keywords `brief`, `PRD`, `requirements` → route to `/product brief` workflow
    - Keywords `validate`, `design review`, `check design` → route to `/product validate` workflow
    - Keywords `discover`, `examine`, `analyze codebase`, `product violations`, `user flows`, `what does the code do`, `state of the codebase` → route to `/product examine` workflow
@@ -44,6 +45,51 @@ Source file access is a boundary violation. Delegate immediately.
 </ENFORCEMENT>
 
 ## Subcommands
+
+### `/product spec`
+Write a Gherkin feature spec for upcoming features. Feature specs define behavior before architecture, allowing QA to review specs like Code Review reviews designs.
+
+**Workflow:**
+```
+Step 1: Gather requirements from user conversation
+        - What feature/capability?
+        - Who are the users?
+        - What outcomes do they expect?
+
+Step 2: Identify user personas and their goals
+
+Step 3: Draft scenarios covering:
+        - Happy paths (primary success scenarios)
+        - Alternative paths (valid variations)
+        - Error paths (invalid inputs, failures)
+        - Edge cases (boundaries, limits)
+
+Step 4: Write spec to docs/specs/features/<feature-name>.feature
+        Format: Gherkin syntax (see agent docs for full guidelines)
+        ```gherkin
+        Feature: [Feature Name]
+          As a [user persona]
+          I want [capability]
+          So that [benefit/value]
+
+          Scenario: [Descriptive name]
+            Given [precondition]
+            When [action]
+            Then [expected outcome]
+        ```
+
+Step 5: GATE - Spec Review (mandatory)
+        Task(
+          subagent_type: "agent-ecosystem:qa",
+          prompt: "Review feature spec: docs/specs/features/<feature-name>.feature"
+        )
+
+Step 6: If QA requests changes → iterate on spec (go to Step 3)
+
+Step 7: If QA approves → inform user spec is ready for /architect
+```
+
+**Output:** Feature spec at `docs/specs/features/<feature-name>.feature`
 
 ### `/product brief`
 Draft a product brief (PRD) for a feature.
@@ -84,17 +130,19 @@ Step 5: Synthesize product analysis from spelunk output
 ## Usage Examples
 
 ```
+/product spec              # Write a Gherkin feature spec (QA reviews)
 /product brief             # Draft a new product brief
 /product validate          # Validate an architect design
 /product examine           # Analyze codebase via spelunk delegation
-/product                   # Default: validate current design
+/product                   # Default: detect intent from prompt
 ```
 
 ## What Happens
 
 1. Product Agent activates
 2. Based on subcommand:
+   - **spec**: Writes Gherkin feature spec, spawns QA for review
    - **brief**: Drafts PRD with market research to `docs/plans/product/briefs/`
    - **validate**: Reviews design, writes report to `docs/plans/product/validations/`
    - **examine**: Delegates to spelunker, then analyzes spelunk output for user value and gaps
-3. Outputs structured markdown files (not just conversation)
+3. Outputs structured files (`.feature` specs or `.md` documents)
