@@ -61,16 +61,18 @@ Source file access is a boundary violation. Delegate immediately.
 ## What Happens
 
 1. Architecture Agent activates in appropriate mode
-2. **Checks for product brief** at `docs/plans/product/briefs/<feature-name>.md`
-   - If brief exists: designs against product requirements
-   - If no brief + user-facing feature: suggests running `/product` first
-   - If no brief + technical work: proceeds with note in design doc
-3. For new features: iterative co-design with you
-4. For examine: **delegates to spelunker**, then produces architecture analysis
-5. For decompose: creates merge tree of tasks
+2. **Step 0: Checks for feature spec** at `docs/specs/features/<feature-name>.feature`
+   - If spec exists: reads it, uses scenarios as requirements input
+   - If no spec + user-facing feature: suggests running `/product spec` first
+   - If no spec + technical work: proceeds with note in design doc
+3. **Checks for product brief** at `docs/plans/product/briefs/<feature-name>.md`
+4. For new features: iterative co-design with you
+5. For examine: **delegates to spelunker**, then produces architecture analysis
+6. For decompose: creates merge tree of tasks
 
 ## Capabilities
 
+- **Feature spec awareness:** Checks for Gherkin specs before designing
 - **Product brief awareness:** Checks for and designs against product briefs
 - **Web search:** Technical research for API docs, library comparisons, implementation patterns
 - **Design docs:** Outputs to `docs/plans/architect/<feature-name>.md`
