@@ -1,7 +1,7 @@
 ---
 description: Invoke Product Agent to validate designs match product goals
 allowed-tools: ["Read", "Glob", "Task", "AskUserQuestion", "Write"]
-argument-hint: "[validate|examine|brief]"
+argument-hint: "[spec|validate|examine|brief]"
 ---
 
 # Product Agent
@@ -66,6 +66,24 @@ Step 6: Synthesize product analysis
 1. Gather requirements from conversation
 2. Use WebSearch for market research
 3. Write brief to `docs/plans/product/briefs/<feature>.md`
+
+### Write Feature Spec (`spec`)
+
+Write Gherkin feature specs defining behavior before architecture.
+
+```
+Step 1: Gather requirements from conversation
+Step 2: Identify user personas and goals
+Step 3: Draft scenarios (happy, error, edge cases)
+Step 4: Write spec to docs/specs/features/<feature>.feature
+Step 5: GATE - Spawn QA for review:
+        Task(subagent_type: "agent-ecosystem:qa",
+             prompt: "Review feature spec: docs/specs/features/<feature>.feature")
+Step 6: Iterate if QA requests changes
+Step 7: When approved, inform user spec is ready for /architect
+```
+
+**Output:** Gherkin feature spec at `docs/specs/features/<feature>.feature`
 
 ## Output
 
