@@ -4,13 +4,16 @@ This file provides guidance for Claude Code when working in this repository.
 
 ## Project Overview
 
-Agent Ecosystem is a Claude Code plugin providing 7 specialized AI agents for software development workflows. It uses beads for task tracking and merge tree workflows for feature decomposition.
+Agent Ecosystem is a Claude Code plugin providing 7 specialized AI agents for software development workflows. It uses the **teammates feature** for inter-agent coordination, beads for task tracking, and merge tree workflows for feature decomposition.
 
 **Key Components:**
-- **7 Specialist Agents:** Orchestrator, Architecture, Product, Coding, QA, Code Review, Security
+- **7 Specialist Agents (Teammates):** Orchestrator (team lead), Architecture, Product, Coding, QA, Code Review, Security
+- **Teammates Coordination:** Agents communicate via messaging and shared task lists instead of Task() subagent spawning
 - **Spelunk System:** Persistent codebase exploration with hash-based cache validation
 - **Merge Tree Workflows:** Decompose features into dependent tasks
 - **GitLab Integration:** Pull MR comments, push MRs
+
+> **Experimental:** Agent teams require `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` enabled.
 
 ## Build and Test Commands
 
@@ -61,6 +64,13 @@ Product / Coding / QA (peer consensus)
 Code Review Agent (gatekeeper)
 ```
 
+### Teammate Communication Model
+Agents coordinate via **inter-agent messaging** and **shared task lists**:
+- **Orchestrator (Team Lead):** Spawns specialist teammates, enforces gates, monitors progress
+- **Specialist Teammates:** Receive work via spawn prompts, communicate via messages
+- **Shared Task List:** Teammates self-claim tasks, report completion to lead
+- **Direct Messaging:** Teammates message each other (e.g., Coding -> QA for test generation)
+
 ### Agent Modes
 Most agents support two modes:
 - **examine:** Read-only exploration, no changes
@@ -70,11 +80,12 @@ Most agents support two modes:
 **Documentation-layer agents** (Architect, Product, QA):
 - Read from `docs/`, `README.md`, config files
 - Cannot read source code directly
-- Delegate to Coding Agent via spelunk for codebase info
+- Delegate to Coding Agent via teammate messaging for spelunk
 
 **Code-layer agents** (Coding, Security):
 - Full source code access
 - Write findings to `docs/spelunk/` for other agents
+- Respond to spelunk requests from documentation-layer teammates
 
 ### Task Scope Rules
 - Target 500 lines per task, max 1000
@@ -134,7 +145,7 @@ Three mandatory approval points where agents pause:
 | Gate | When | Agent Says |
 |------|------|------------|
 | Design Review | After architect writes design doc | "Design draft complete. Review and approve/revise/discuss." |
-| Pre-Implementation | After decompose creates task tree | "Task tree created. Want me to spawn N Coding Agents?" |
+| Pre-Implementation | After decompose creates task tree | "Task tree created. Want me to spawn N Coding teammates?" |
 | Pre-Commit | After implementation complete | "Ready to commit?" |
 
 **Rules:**
@@ -203,10 +214,41 @@ Gherkin specs → Playwright tests flow:
 /gitlab-push-mr          # Create/update MR
 ```
 
+## Teammates Feature
+
+Agents use Claude Code's experimental **agent teams** feature for coordination:
+
+### How It Works
+- **Orchestrator** is the team lead; spawns specialist teammates
+- Each teammate is a full Claude Code session with its own context
+- Teammates communicate via **messages** (not Task() subagent spawning)
+- **Shared task list** tracks work assignments and progress
+
+### Teammate Roles
+| Agent | Role | Spawned When |
+|-------|------|-------------|
+| Orchestrator | Team lead | Always active |
+| Architect | Specialist | New feature, design |
+| Product | Specialist | Spec, brief, validation |
+| Coding | Specialist | Implementation, spelunk |
+| QA | Specialist | Test generation, coverage |
+| Code Review | Specialist | Pre-merge review |
+| Security | Specialist | Security audit (VETO) |
+
+### Communication Flow
+```
+Lead spawns teammates -> Teammates claim tasks -> Teammates message each other
+-> Teammates report to lead -> Lead enforces gates with human
+```
+
+### Requirements
+- Enable `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` in settings.json or environment
+
 ## Plugin Development Notes
 
 - Plugin root is `plugin/` directory
 - Commands in `plugin/commands/` are exposed as `/command-name`
 - Skills in `plugin/skills/*/SKILL.md` are invocable
+- Agent definitions in `plugin/agents/*.md` include `teammate_role` field
 - Hooks registered in `plugin/hooks/hooks.json`
 - Test changes with `./scripts/test-ecosystem.sh`

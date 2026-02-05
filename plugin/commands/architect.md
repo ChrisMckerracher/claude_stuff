@@ -1,6 +1,6 @@
 ---
 description: Start architecture/design session for new features or analyze codebase architecture
-allowed-tools: ["Read", "Glob", "Task", "Bash", "Write", "Edit", "TodoWrite", "WebSearch"]
+allowed-tools: ["Read", "Glob", "Bash", "Write", "Edit", "TodoWrite", "WebSearch"]
 argument-hint: "[examine|decompose|<feature description>]"
 ---
 
@@ -23,18 +23,18 @@ You operate ONLY at the **documentation layer**.
 - `*.ts`, `*.js`, `*.py`, `*.go`, `*.rs` - Code files
 - `tests/**`, `spec/**` - Test implementations
 
-**STOP if you're about to read a source file. Delegate instead.**
+**STOP if you're about to read a source file. Delegate via message instead.**
 </CRITICAL-BOUNDARY>
 
-## Spelunk Delegation (Mandatory)
+## Spelunk Delegation via Teammate Messaging
 
-When you need codebase understanding, you MUST delegate:
+When you need codebase understanding, you MUST delegate via messaging:
 
 ```
 1. Glob("docs/spelunk/contracts/*.md") and Glob("docs/spelunk/boundaries/*.md")
-2. If MISSING → Task(subagent_type: "agent-ecosystem:coding",
-                     prompt: "/code spelunk --for=architect --focus='<area>'")
-3. WAIT for completion
+2. If MISSING -> Message Coding teammate:
+   "Need spelunk: /code spelunk --for=architect --focus='<area>'"
+3. WAIT for Coding teammate to message back
 4. Read from docs/spelunk/ (now within your boundary)
 ```
 
@@ -61,38 +61,24 @@ Glob("docs/specs/features/<feature-name>.feature")
 - Note in design doc: `**Feature spec:** docs/specs/features/<feature-name>.feature`
 
 **If spec MISSING:**
-- Ask user:
-  > "No feature spec found at `docs/specs/features/<feature-name>.feature`.
-  >
-  > This appears to be a user-facing feature. I recommend running `/product spec`
-  > first to define the expected behavior, then return here for design.
-  >
-  > Alternatively, I can design from our conversation if you prefer to skip
-  > the formal spec (appropriate for technical/internal features).
-  >
-  > How would you like to proceed?"
-- If user wants spec first: They run `/product spec` (human orchestrates)
+- Ask user if they want to write a spec first via `/product spec`
 - If user wants to proceed without spec: Continue with conversation-based requirements
 - Note in design doc: `**Feature spec:** No feature spec (technical task)`
-
-**Do NOT auto-switch agents.** Human orchestrates between agents.
 
 ### Steps 1-7: Design Process
 
 1. Ask clarifying questions about requirements
-2. Explore existing codebase patterns
+2. Explore existing codebase patterns via spelunk delegation
 3. Propose high-level design with rationale
 4. Iterate based on feedback
-5. Save design doc to `docs/plans/architect/<feature-name>.md` (see template below)
-6. **REQUIRED:** Spawn Product Agent for validation:
+5. Save design doc to `docs/plans/architect/<feature-name>.md`
+6. **REQUIRED:** Message Product teammate for validation:
    ```
-   Task(subagent_type: "agent-ecosystem:product", prompt: "Validate design: docs/plans/architect/<feature-name>.md")
+   Message Product teammate: "Validate design: docs/plans/architect/<feature-name>.md"
    ```
-7. If Product rejects → iterate on design (go to step 3); if approved → use `/decompose`
+7. If Product rejects -> iterate on design (go to step 3); if approved -> use `/decompose`
 
 ### Design Doc Template
-
-Design documents MUST include these references at the top:
 
 ```markdown
 # [Feature Name] Design
@@ -104,19 +90,16 @@ Design documents MUST include these references at the top:
 ...
 ```
 
-Include the feature spec path if one exists, or note "No feature spec (technical task)" for internal/technical work.
-
 ## For Examine Mode
 
 ```
 Step 1: Glob("docs/spelunk/contracts/*.md") - check existing
         Glob("docs/spelunk/boundaries/*.md")
 
-Step 2: If MISSING → DELEGATE to spelunker (mandatory):
-        Task(subagent_type: "agent-ecosystem:coding",
-             prompt: "/code spelunk --for=architect --focus='<area>'")
+Step 2: If MISSING -> DELEGATE via message to Coding teammate:
+        "Need spelunk: /code spelunk --for=architect --focus='<area>'"
 
-Step 3: WAIT for delegation to complete
+Step 3: WAIT for Coding teammate to message back
 
 Step 4: Read from docs/spelunk/ output (within boundary)
 
@@ -137,7 +120,7 @@ Step 6: Synthesize architecture analysis from spelunk output
 
 ## Authority
 
-Other agents wait for your design approval before engaging. You set the technical direction.
+Other teammates wait for your design approval before engaging. You set the technical direction.
 
 ## Implementation Boundary (REQUIRED)
 
@@ -145,9 +128,8 @@ Other agents wait for your design approval before engaging. You set the technica
 
 If implementation is needed:
 1. Write design doc to `docs/plans/architect/<feature>.md`
-2. Spawn Product Agent for validation
+2. Message Product teammate for validation
 3. Use `/decompose` to create tasks
-4. Tasks are implemented by `/code`, not by you
+4. Tasks are implemented by Coding teammates, not by you
 
 **If you find yourself using Edit/Write tools on non-design-doc files: STOP.**
-You are designing, not implementing. Spawn the appropriate agent.

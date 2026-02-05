@@ -1,6 +1,6 @@
 ---
-description: Invoke Product Agent to validate designs match product goals
-allowed-tools: ["Read", "Glob", "Task", "AskUserQuestion", "Write"]
+description: Invoke Product Agent to validate designs and manage product specifications
+allowed-tools: ["Read", "Glob", "Write", "WebSearch"]
 argument-hint: "[spec|validate|examine|brief]"
 ---
 
@@ -23,18 +23,18 @@ You operate ONLY at the **documentation layer**.
 - `*.ts`, `*.js`, `*.py`, `*.go`, `*.rs` - Code files
 - `tests/**`, `spec/**` - Test implementations
 
-**STOP if you're about to read a source file. Delegate instead.**
+**STOP if you're about to read a source file. Delegate via message instead.**
 </CRITICAL-BOUNDARY>
 
-## Spelunk Delegation (Mandatory)
+## Spelunk Delegation via Teammate Messaging
 
-When you need codebase understanding, you MUST delegate:
+When you need codebase understanding, you MUST delegate via messaging:
 
 ```
 1. Glob("docs/spelunk/flows/*.md") - check existing docs
-2. If MISSING → Task(subagent_type: "agent-ecosystem:coding",
-                     prompt: "/code spelunk --for=product --focus='<area>'")
-3. WAIT for completion
+2. If MISSING -> Message Coding teammate:
+   "Need spelunk: /code spelunk --for=product --focus='<area>'"
+3. WAIT for Coding teammate to message back
 4. Read from docs/spelunk/flows/ (now within your boundary)
 ```
 
@@ -47,13 +47,14 @@ When you need codebase understanding, you MUST delegate:
 3. Identify potential user experience issues
 4. Verify scope is appropriate
 5. Write validation report to `docs/plans/product/validations/`
+6. Message Architect teammate with result
 
 ### Examine Product (`examine`)
 
 ```
 Step 1: Glob("docs/spelunk/flows/*.md") - check existing
-Step 2: If MISSING → DELEGATE to spelunker (mandatory)
-Step 3: WAIT for delegation
+Step 2: If MISSING -> DELEGATE via message to Coding teammate
+Step 3: WAIT for Coding teammate to message back
 Step 4: Read docs/spelunk/flows/ output
 Step 5: Read README.md and docs/**
 Step 6: Synthesize product analysis
@@ -76,9 +77,8 @@ Step 1: Gather requirements from conversation
 Step 2: Identify user personas and goals
 Step 3: Draft scenarios (happy, error, edge cases)
 Step 4: Write spec to docs/specs/features/<feature>.feature
-Step 5: GATE - Spawn QA for review:
-        Task(subagent_type: "agent-ecosystem:qa",
-             prompt: "Review feature spec: docs/specs/features/<feature>.feature")
+Step 5: GATE - Message QA teammate for review:
+        "Review feature spec: docs/specs/features/<feature>.feature"
 Step 6: Iterate if QA requests changes
 Step 7: When approved, inform user spec is ready for /architect
 ```

@@ -266,22 +266,19 @@ Agent categorizes comments by type and severity:
 Spawn Architect agent to draft fix plan:
 
 ```
-Task(
-  subagent_type: "agent-ecosystem:architect",
-  prompt: "Draft fixes for MR !102 feedback:
+Message Architect teammate: "Draft fixes for MR !102 feedback:
 
-           Blocking issues:
-           1. Add Zod validation in middleware for user ID
-           2. Add 404 handling for user not found
+Blocking issues:
+1. Add Zod validation in middleware for user ID
+2. Add 404 handling for user not found
 
-           Context:
-           - Stack: auth-system
-           - Branch: stack/auth-system/2-routes
-           - Worktree: .worktrees/auth-system
+Context:
+- Stack: auth-system
+- Branch: stack/auth-system/2-routes
+- Worktree: .worktrees/auth-system
 
-           Output: JSON fix manifest with file changes.
-           DO NOT implement - output descriptions and line ranges only."
-)
+Output: JSON fix manifest with file changes.
+DO NOT implement - output descriptions and line ranges only."
 ```
 
 **Architect outputs fix manifest:**
@@ -358,27 +355,24 @@ Approve this fix plan? [y/n/discuss]
 
 ### Phase 4: Implement Fix (Coding Agent Delegation)
 
-On user approval, spawn Coding agent:
+On user approval, message Coding teammate:
 
 ```
-Task(
-  subagent_type: "agent-ecosystem:code",
-  prompt: "Implement fixes per manifest for MR !102.
+Message Coding teammate: "Implement fixes per manifest for MR !102.
 
-           Work in: .worktrees/auth-system/
-           Branch: stack/auth-system/2-routes
+Work in: .worktrees/auth-system/
+Branch: stack/auth-system/2-routes
 
-           Fixes:
-           1. Create src/middleware/validation.ts with Zod schema
-           2. Modify src/routes/user.ts:44-50 to use validation
-           3. Modify src/controllers/user.ts:75-85 for 404 handling
+Fixes:
+1. Create src/middleware/validation.ts with Zod schema
+2. Modify src/routes/user.ts:44-50 to use validation
+3. Modify src/controllers/user.ts:75-85 for 404 handling
 
-           Use TDD workflow - write tests first.
-           DO NOT commit - stage changes and report for human approval."
-)
+Use TDD workflow - write tests first.
+DO NOT commit - stage changes and report for human approval."
 ```
 
-**Coding Agent responsibilities:**
+**Coding teammate responsibilities:**
 - Navigate to correct worktree
 - Checkout correct branch
 - Write tests first (TDD)
@@ -603,28 +597,25 @@ Determine tier:
 
 ### Step 2: Code Analysis (All Tiers - Required)
 
-**ALWAYS** spawn Code agent for spelunk analysis first. This is ephemeral - no doc is saved.
+**ALWAYS** message Coding teammate for analysis first. This is ephemeral - no doc is saved.
 
 ```
-Task(
-  subagent_type: "agent-ecosystem:code",
-  prompt: """Analyze this commit for MR description (DO NOT save spelunk doc):
+Message Coding teammate: "Analyze this commit for MR description (DO NOT save spelunk doc):
 
-  Commit range: <base>...<head>
-  Diff:
-  <diff-output>
+Commit range: <base>...<head>
+Diff:
+<diff-output>
 
-  Output JSON:
-  {
-    "summary": "One-line summary of changes",
-    "files_changed": [{"path": "...", "insertions": N, "deletions": N}],
-    "key_constructs": ["functions/classes/interfaces added or changed"],
-    "dependencies": ["packages added/removed"],
-    "public_api": ["exports, breaking changes if any"],
-    "test_coverage": "what tests were added/modified"
-  }
-  """
-)
+Output JSON:
+{
+  'summary': 'One-line summary of changes',
+  'files_changed': [{'path': '...', 'insertions': N, 'deletions': N}],
+  'key_constructs': ['functions/classes/interfaces added or changed'],
+  'dependencies': ['packages added/removed'],
+  'public_api': ['exports, breaking changes if any'],
+  'test_coverage': 'what tests were added/modified'
+}
+Message back when complete."
 ```
 
 Store result as `code_analysis`.
@@ -637,66 +628,57 @@ Skip additional agents. Proceed directly to Step 4 with only `code_analysis`.
 
 #### MEDIUM Tier (50-200 lines)
 
-Spawn Architect agent for technical design rationale:
+Message Architect teammate for technical design rationale:
 
 ```
-Task(
-  subagent_type: "agent-ecosystem:architect",
-  prompt: """Add technical design rationale to MR description.
+Message Architect teammate: "Add technical design rationale to MR description.
 
-  Code analysis: ${JSON.stringify(code_analysis)}
+Code analysis: ${JSON.stringify(code_analysis)}
 
-  Output JSON:
-  {
-    "approach": "Why this design approach was chosen",
-    "alternatives": "What alternatives were considered",
-    "tradeoffs": "Pros and cons of this approach"
-  }
-  """
-)
+Output JSON:
+{
+  'approach': 'Why this design approach was chosen',
+  'alternatives': 'What alternatives were considered',
+  'tradeoffs': 'Pros and cons of this approach'
+}
+Message back when complete."
 ```
 
 Store result as `tech_design`.
 
 #### LARGE Tier (> 200 lines)
 
-Spawn Product AND Architect agents **in parallel** (they both only depend on code_analysis):
+Message Product AND Architect teammates **in parallel** (they both only depend on code_analysis):
 
 ```
-# These run CONCURRENTLY - spawn both before waiting for either
-product_task = Task(
-  subagent_type: "agent-ecosystem:product",
-  prompt: """Add product perspective to MR description.
+# Send messages to both teammates simultaneously
+Message Product teammate: "Add product perspective to MR description.
 
-  Code analysis: ${JSON.stringify(code_analysis)}
+Code analysis: ${JSON.stringify(code_analysis)}
 
-  Output JSON:
-  {
-    "what_enables": "User-facing capabilities this enables",
-    "user_impact": "Who benefits and how",
-    "product_dependencies": "What this requires or enables for product"
-  }
-  """
-)
+Output JSON:
+{
+  'what_enables': 'User-facing capabilities this enables',
+  'user_impact': 'Who benefits and how',
+  'product_dependencies': 'What this requires or enables for product'
+}
+Message back when complete."
 
-architect_task = Task(
-  subagent_type: "agent-ecosystem:architect",
-  prompt: """Add technical design rationale to MR description.
+Message Architect teammate: "Add technical design rationale to MR description.
 
-  Code analysis: ${JSON.stringify(code_analysis)}
+Code analysis: ${JSON.stringify(code_analysis)}
 
-  Output JSON:
-  {
-    "approach": "Why this design approach was chosen",
-    "alternatives": "What alternatives were considered",
-    "tradeoffs": "Pros and cons of this approach"
-  }
-  """
-)
+Output JSON:
+{
+  'approach': 'Why this design approach was chosen',
+  'alternatives': 'What alternatives were considered',
+  'tradeoffs': 'Pros and cons of this approach'
+}
+Message back when complete."
 
-# Wait for both to complete
-product_value = await product_task
-tech_design = await architect_task
+# Wait for both teammates to message back with results
+product_value = <from Product teammate message>
+tech_design = <from Architect teammate message>
 ```
 
 ### Step 4: Craft MR Description
