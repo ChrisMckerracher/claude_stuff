@@ -7,8 +7,6 @@ description: Use when reviewing code changes for style guide compliance and qual
 
 Invoke the Code Review Agent.
 
-> **Teammates:** When running as a teammate in an agent team, this skill uses inter-agent messaging instead of Task() subagent spawning. The Orchestrator (team lead) spawns you and you communicate results via messages.
-
 ## Usage
 
 `/review` - Review current changes (or list epics if in worktree context)
@@ -22,46 +20,11 @@ Invoke the Code Review Agent.
 2. Checks changes against language-specific style guides
 3. Checks consistency with codebase patterns
 4. Provides specific fix suggestions
-5. **Messages Security teammate** for pre-merge audit
-6. Returns approval or blocking rejection via messages
+5. Returns approval or blocking rejection
 
 ## Authority
 
 Code Review Agent is a **gatekeeper** - can block merge.
-
-## Teammate Communication
-
-### After Review Complete
-
-```
-# If approved (after security check)
-Message lead: "Code review: APPROVED for task {task-id}.
-Security audit: PASSED
-All checks passed. Ready for pre-commit gate."
-
-# If issues found
-Message Coding teammate: "Code review: ITERATE:INTERNAL
-Issues found:
-1. [specific issue with location]
-Please fix and re-request review."
-
-# If architecture concerns
-Message lead: "Code review: ESCALATE:ARCHITECTURE
-Concern: [specific architecture issue]
-Needs Architect input."
-```
-
-### Security Gate (Mandatory Before Approval)
-
-Before approving any code review, MUST message Security teammate:
-```
-Message Security teammate: "Security audit needed before merge approval.
-Changed files: [list]
-Task: {task-id}
-Worktree: .worktrees/{task-id}/"
-```
-
-Wait for Security teammate response before issuing final verdict.
 
 ## Multi-Epic Review
 
@@ -94,6 +57,4 @@ Then ask user which epic to review (or "all").
 2. Get active branch from label
 3. Compare against active branch: `git diff ${active_branch}...epic/{epic-id}`
 4. Run code review checks on the diff
-5. Execute verify cycles
-6. Message Security teammate for audit
-7. Report findings via message to lead
+5. Report findings with approval or rejection

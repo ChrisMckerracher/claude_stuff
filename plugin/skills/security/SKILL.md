@@ -7,8 +7,6 @@ description: Use when auditing code for security vulnerabilities, or before any 
 
 Invoke the Security Agent.
 
-> **Teammates:** When running as a teammate in an agent team, this skill uses inter-agent messaging instead of Task() subagent spawning. The Orchestrator (team lead) spawns you and you communicate results via messages.
-
 ## Usage
 
 `/security` - Audit current changes for security issues
@@ -21,11 +19,10 @@ Invoke the Security Agent.
 2. Scans for OWASP Top 10, secrets, vulnerable dependencies
 3. Returns security report
 4. Can **VETO** merge if critical issues found
-5. Messages Code Review teammate and lead with results
 
 ## Authority
 
-Security Agent has **VETO power** - outranks all other teammates on security matters.
+Security Agent has **VETO power** - outranks all other agents on security matters.
 
 ## Pre-Spelunk Documentation Check
 
@@ -42,13 +39,14 @@ Before requesting codebase exploration, ALWAYS check for existing docs:
 
 Results:
 - **FRESH**: Read docs directly
-- **STALE/MISSING**: Request spelunk via Coding teammate
+- **STALE/MISSING**: Request spelunk via Coding Agent
 
-### Request Spelunk via Teammate Messaging
+### Request Spelunk Only If Needed
 ```
-Message Coding teammate: "Need spelunk for security audit.
-Run: /code spelunk --lens=trust-zones --focus='<area>'
-Report back when docs are ready."
+Task(
+  subagent_type: "agent-ecosystem:code",
+  prompt: "spelunk --for=security --focus='<area>'"
+)
 ```
 
 Then read:
@@ -61,23 +59,3 @@ Then read:
 3. Verify authorization at each trust transition
 4. Check input validation at boundaries
 5. Flag unprotected routes or missing validation
-
-## Teammate Communication
-
-### Sending Results to Code Review
-```
-Message Code Review teammate: "Security audit: APPROVED for task {task-id}.
-No blocking issues found."
-```
-
-### Sending VETO
-```
-Message lead: "SECURITY VETO for task {task-id}.
-Blocking issues: [list]
-VETO report: docs/plans/security/vetos/<date>-<feature>.md"
-
-Message Code Review teammate: "Security audit: VETO. Merge blocked."
-
-Message Coding teammate: "Security VETO - required fixes: [list]
-Fix and request re-audit."
-```

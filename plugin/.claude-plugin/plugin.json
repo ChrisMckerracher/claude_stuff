@@ -1,6 +1,6 @@
 {
   "name": "agent-ecosystem",
-  "description": "7 specialist agents with teammate-based coordination, merge tree workflows, and invisible task tracking",
+  "description": "7 specialist agents with merge tree workflows and invisible task tracking",
   "version": "0.13.0",
   "author": {
     "name": "chrismck"
@@ -8,5 +8,5 @@
   "license": "MIT",
   "repository": "https://github.com/ChrisMckerracher/claude_stuff",
   "homepage": "https://github.com/ChrisMckerracher/claude_stuff#readme",
-  "keywords": ["agents", "teammates", "agent-teams", "beads", "merge-tree", "tdd", "workflow", "spelunk", "orchestrator"]
+  "keywords": ["agents", "beads", "merge-tree", "tdd", "workflow", "spelunk", "orchestrator"]
 }

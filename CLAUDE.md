@@ -4,16 +4,13 @@ This file provides guidance for Claude Code when working in this repository.
 
 ## Project Overview
 
-Agent Ecosystem is a Claude Code plugin providing 7 specialized AI agents for software development workflows. It uses the **teammates feature** for inter-agent coordination, beads for task tracking, and merge tree workflows for feature decomposition.
+Agent Ecosystem is a Claude Code plugin providing 7 specialized AI agents for software development workflows. It uses beads for task tracking and merge tree workflows for feature decomposition.
 
 **Key Components:**
-- **7 Specialist Agents (Teammates):** Orchestrator (team lead), Architecture, Product, Coding, QA, Code Review, Security
-- **Teammates Coordination:** Agents communicate via messaging and shared task lists instead of Task() subagent spawning
+- **7 Specialist Agents:** Orchestrator, Architecture, Product, Coding, QA, Code Review, Security
 - **Spelunk System:** Persistent codebase exploration with hash-based cache validation
 - **Merge Tree Workflows:** Decompose features into dependent tasks
 - **GitLab Integration:** Pull MR comments, push MRs
-
-> **Experimental:** Agent teams require `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` enabled.
 
 ## Build and Test Commands
 
@@ -64,13 +61,6 @@ Product / Coding / QA (peer consensus)
 Code Review Agent (gatekeeper)
 ```
 
-### Teammate Communication Model
-Agents coordinate via **inter-agent messaging** and **shared task lists**:
-- **Team Lead (Orchestrator or Architect `--role=lead`):** Spawns specialist teammates, enforces gates, monitors progress
-- **Specialist Teammates:** Receive work via spawn prompts, communicate via messages
-- **Shared Task List:** Teammates self-claim tasks, report completion to lead
-- **Direct Messaging:** Teammates message each other (e.g., Coding -> QA for test generation)
-
 ### Agent Modes
 Most agents support two modes:
 - **examine:** Read-only exploration, no changes
@@ -80,24 +70,11 @@ Most agents support two modes:
 **Documentation-layer agents** (Architect, Product, QA):
 - Read from `docs/`, `README.md`, config files
 - Cannot read source code directly
-- Delegate to Coding Agent via teammate messaging for spelunk
+- Delegate to Coding Agent via spelunk for codebase info
 
 **Code-layer agents** (Coding, Security):
 - Full source code access
 - Write findings to `docs/spelunk/` for other agents
-- Respond to spelunk requests from documentation-layer teammates
-
-### Design Drift Resolution
-When parallel Coding teammates diverge from the design or each other:
-1. **Detect** — Coding agents flag drift at interface boundaries, ambiguous decisions, or pattern mismatches
-2. **Peer converge** — Coding agents message each other to try to align
-3. **Escalate** — If peer convergence fails, escalate to lead via `DRIFT ESCALATION`
-4. **Arbitrate** — Lead routes to Architect (or handles directly if Architect-led). Architect writes a binding resolution
-5. **Adopt** — All affected Coding agents adopt the resolution and confirm
-
-Drift resolutions are recorded at `docs/plans/architect/drift-resolutions/`.
-
-**Key rule:** The Architect is always the final authority on drift. The lead routes but never resolves. Coding teammates may resolve minor pattern drift between themselves, but interface or contract drift must go to the Architect.
 
 ### Task Scope Rules
 - Target 500 lines per task, max 1000
@@ -132,7 +109,6 @@ Fallback chain: LSP -> AST (ast-grep/semgrep) -> Grep
 | `plugin/hooks/` | Git and session hooks |
 | `plugin/lib/spelunk/` | Spelunk TypeScript implementation |
 | `docs/plans/architect/` | Architecture design documents |
-| `docs/plans/architect/drift-resolutions/` | Architect drift arbitration records |
 | `docs/spelunk/` | Generated codebase exploration docs |
 | `docs/spelunk/_staleness.json` | Hash validation for spelunk docs |
 | `docs/specs/features/` | Gherkin feature specs (BDD) |
@@ -158,7 +134,7 @@ Three mandatory approval points where agents pause:
 | Gate | When | Agent Says |
 |------|------|------------|
 | Design Review | After architect writes design doc | "Design draft complete. Review and approve/revise/discuss." |
-| Pre-Implementation | After decompose creates task tree | "Task tree created. Want me to spawn N Coding teammates?" |
+| Pre-Implementation | After decompose creates task tree | "Task tree created. Want me to spawn N Coding Agents?" |
 | Pre-Commit | After implementation complete | "Ready to commit?" |
 
 **Rules:**
@@ -188,20 +164,12 @@ Work is NOT complete until `git push` succeeds.
 
 ## Common Workflows
 
-### Start New Feature (Orchestrator-led)
+### Start New Feature
 ```
 /product spec       # Write Gherkin feature spec (QA reviews)
 /architect          # Co-design with human (reads spec if exists)
 /decompose          # Create task tree
 /visualize          # See what's ready
-```
-
-### Start New Feature (Architect-led)
-```
-/product spec              # Write Gherkin feature spec (QA reviews)
-/architect --role=lead     # Co-design AND coordinate team directly
-                           # Architect handles design, decompose, and
-                           # spawns Coding/QA teammates after approval
 ```
 
 ### BDD Feature Spec Workflow
@@ -229,75 +197,16 @@ Gherkin specs → Playwright tests flow:
 /merge-up           # Merge to parent
 ```
 
-### Resolve Design Drift
-```
-/design-drift                    # Scan active tasks for drift
-/design-drift task-1 task-2      # Compare two tasks for conflicts
-/design-drift resolve <id>       # View a previous resolution
-```
-
 ### GitLab Operations
 ```
 /gitlab-pull-comments    # Fetch MR feedback
 /gitlab-push-mr          # Create/update MR
 ```
 
-## Teammates Feature
-
-Agents use Claude Code's experimental **agent teams** feature for coordination:
-
-### How It Works
-- **Orchestrator** is the team lead; spawns specialist teammates
-- Each teammate is a full Claude Code session with its own context
-- Teammates communicate via **messages** (not Task() subagent spawning)
-- **Shared task list** tracks work assignments and progress
-
-### Teammate Roles
-| Agent | Role | Spawned When |
-|-------|------|-------------|
-| Orchestrator | Team lead | Always active (default lead) |
-| Architect | Specialist or Lead | New feature, design. Use `--role=lead` for player-coach mode |
-| Product | Specialist | Spec, brief, validation |
-| Coding | Specialist | Implementation, spelunk |
-| QA | Specialist | Test generation, coverage |
-| Code Review | Specialist | Pre-merge review |
-| Security | Specialist | Security audit (VETO) |
-
-### Team Lead Options
-
-Two ways to run the team:
-
-| Mode | Command | Lead | Architect |
-|------|---------|------|-----------|
-| **Orchestrator-led** (default) | `/orchestrator` | Orchestrator | Spawned as specialist |
-| **Architect-led** | `/architect --role=lead` | Architect | Is the lead (player-coach) |
-
-**Architect-led** is useful when you want the lead to directly understand
-and draft designs instead of routing through a coordinator.
-
-### Communication Flow
-```
-Lead spawns teammates -> Teammates claim tasks -> Teammates message each other
--> Teammates report to lead -> Lead enforces gates with human
-```
-
-### Design Drift Flow
-```
-Coding A detects drift -> Signals Coding B -> Peer convergence attempt
-  ├── Converged -> Both adopt, notify lead
-  └── Not converged -> DRIFT ESCALATION to lead -> Lead routes to Architect
-      -> Architect writes binding resolution -> Lead relays to Coding A & B
-      -> Both adopt, confirm to lead
-```
-
-### Requirements
-- Enable `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` in settings.json or environment
-
 ## Plugin Development Notes
 
 - Plugin root is `plugin/` directory
 - Commands in `plugin/commands/` are exposed as `/command-name`
 - Skills in `plugin/skills/*/SKILL.md` are invocable
-- Agent definitions in `plugin/agents/*.md` include `teammate_role` field (and optionally `teammate_role_options` for agents that support multiple roles)
 - Hooks registered in `plugin/hooks/hooks.json`
 - Test changes with `./scripts/test-ecosystem.sh`
