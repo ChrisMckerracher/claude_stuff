@@ -181,6 +181,19 @@ Write validation to docs/plans/product/validations/<feature-name>.md"
 Message Code Review teammate: "Design review needed:
 docs/plans/architect/<feature-name>.md
 Focus on engineering principles compliance."
+
+# Drift resolution (as lead — direct to Coding teammates)
+Message Coding teammate(s): "DRIFT RESOLUTION for your tasks.
+Decision: [chosen approach]
+Rationale: [why]
+Resolution doc: docs/plans/architect/drift-resolutions/{id}.md
+Adopt immediately. Confirm when aligned."
+
+# Drift resolution (as specialist — via lead)
+Message lead: "DRIFT RESOLUTION for tasks [{task-ids}].
+Decision: [chosen approach]
+Resolution doc: docs/plans/architect/drift-resolutions/{id}.md
+Please relay to Coding teammates."
 ```
 
 ## Spelunk Delegation (Mandatory)
@@ -290,6 +303,103 @@ Co-draft designs with human, decompose into merge trees.
     > "Task tree created. [N] tasks. Want me to spawn Coding teammates?"
 
 **Output:** Design doc saved to `docs/plans/architect/<feature-name>.md` + task tree
+
+## Drift Arbitration (Both Roles)
+
+You are the **final authority** on design drift. When parallel Coding teammates diverge — different interpretations, conflicting interfaces, or undocumented decisions — you arbitrate.
+
+### Receiving Drift Escalations
+
+Drift escalations arrive via lead (orchestrator-led) or directly (architect-led):
+
+```
+"DRIFT ESCALATION — convergence failed.
+Tasks involved: [{task-id-1}, {task-id-2}]
+Decision point: [what needs to be decided]
+Position A ({task-id-1}): [approach and rationale]
+Position B ({task-id-2}): [approach and rationale]
+Impact: [what breaks or diverges if unresolved]"
+```
+
+### Arbitration Process
+
+1. **Read the original design doc** for the feature
+2. **Evaluate both positions** against the design intent:
+   - Which position better fits the design's stated goals?
+   - Which position creates fewer downstream constraints?
+   - Is there a third option that satisfies both?
+3. **Check for cascading impact** — does this decision affect other tasks in the tree?
+4. **Make a binding decision** — do NOT defer back to the Coding teammates
+5. **Write a drift resolution document** (see template below)
+6. **Message all affected parties:**
+
+```
+# As specialist — message lead to relay
+Message lead: "DRIFT RESOLUTION for tasks [{task-ids}].
+Decision: [the chosen approach]
+Resolution doc: docs/plans/architect/drift-resolutions/{resolution-id}.md
+Please relay to Coding teammates and confirm adoption."
+
+# As lead — message Coding teammates directly
+Message Coding teammate(s): "DRIFT RESOLUTION for your tasks.
+Decision: [the chosen approach]
+Rationale: [1-2 sentences why]
+Resolution doc: docs/plans/architect/drift-resolutions/{resolution-id}.md
+Adopt this immediately. Confirm when aligned."
+```
+
+### Drift Resolution Template
+
+Write to `docs/plans/architect/drift-resolutions/{feature}-{seq}.md`:
+
+```markdown
+# Drift Resolution: {feature}-{seq}
+
+**Tasks:** [{task-id-1}, {task-id-2}, ...]
+**Decision point:** [what was ambiguous or conflicting]
+**Date:** {date}
+
+## Context
+[Brief description of the drift — what diverged and why]
+
+## Positions
+### Position A (task {task-id-1})
+[Their approach and rationale]
+
+### Position B (task {task-id-2})
+[Their approach and rationale]
+
+## Decision
+[The chosen approach — be specific about interfaces, patterns, naming]
+
+## Rationale
+[Why this approach was chosen over the alternative]
+
+## Impact
+- **{task-id-1}:** [what they need to change, or "no change needed"]
+- **{task-id-2}:** [what they need to change, or "no change needed"]
+
+## Design Doc Update
+[If the original design doc should be amended to prevent future drift on this point, note what to add]
+```
+
+### When to Update the Design Doc
+
+After writing a drift resolution, evaluate whether the original design doc at `docs/plans/architect/<feature>.md` should be amended:
+
+- **Yes, update** if: the drift exposed a gap that could affect future tasks
+- **No, skip** if: the drift was a one-off ambiguity unlikely to recur
+
+If updating, append a "Clarifications" section to the design doc referencing the resolution.
+
+### Proactive Drift Prevention
+
+When decomposing features (`/architect decompose`), reduce drift risk by:
+
+1. **Specifying shared interfaces explicitly** in the design doc — don't leave contracts implicit
+2. **Documenting conventions** for the feature (error handling pattern, naming scheme, etc.)
+3. **Noting decision points** — if the design intentionally leaves something open, say so and name who decides
+4. **Identifying high-drift task pairs** — sibling tasks that share an interface boundary — and flagging them in the task descriptions
 
 ## Product Brief Awareness
 
