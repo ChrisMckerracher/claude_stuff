@@ -66,7 +66,7 @@ Code Review Agent (gatekeeper)
 
 ### Teammate Communication Model
 Agents coordinate via **inter-agent messaging** and **shared task lists**:
-- **Orchestrator (Team Lead):** Spawns specialist teammates, enforces gates, monitors progress
+- **Team Lead (Orchestrator or Architect `--role=lead`):** Spawns specialist teammates, enforces gates, monitors progress
 - **Specialist Teammates:** Receive work via spawn prompts, communicate via messages
 - **Shared Task List:** Teammates self-claim tasks, report completion to lead
 - **Direct Messaging:** Teammates message each other (e.g., Coding -> QA for test generation)
@@ -175,12 +175,20 @@ Work is NOT complete until `git push` succeeds.
 
 ## Common Workflows
 
-### Start New Feature
+### Start New Feature (Orchestrator-led)
 ```
 /product spec       # Write Gherkin feature spec (QA reviews)
 /architect          # Co-design with human (reads spec if exists)
 /decompose          # Create task tree
 /visualize          # See what's ready
+```
+
+### Start New Feature (Architect-led)
+```
+/product spec              # Write Gherkin feature spec (QA reviews)
+/architect --role=lead     # Co-design AND coordinate team directly
+                           # Architect handles design, decompose, and
+                           # spawns Coding/QA teammates after approval
 ```
 
 ### BDD Feature Spec Workflow
@@ -227,13 +235,25 @@ Agents use Claude Code's experimental **agent teams** feature for coordination:
 ### Teammate Roles
 | Agent | Role | Spawned When |
 |-------|------|-------------|
-| Orchestrator | Team lead | Always active |
-| Architect | Specialist | New feature, design |
+| Orchestrator | Team lead | Always active (default lead) |
+| Architect | Specialist or Lead | New feature, design. Use `--role=lead` for player-coach mode |
 | Product | Specialist | Spec, brief, validation |
 | Coding | Specialist | Implementation, spelunk |
 | QA | Specialist | Test generation, coverage |
 | Code Review | Specialist | Pre-merge review |
 | Security | Specialist | Security audit (VETO) |
+
+### Team Lead Options
+
+Two ways to run the team:
+
+| Mode | Command | Lead | Architect |
+|------|---------|------|-----------|
+| **Orchestrator-led** (default) | `/orchestrator` | Orchestrator | Spawned as specialist |
+| **Architect-led** | `/architect --role=lead` | Architect | Is the lead (player-coach) |
+
+**Architect-led** is useful when you want the lead to directly understand
+and draft designs instead of routing through a coordinator.
 
 ### Communication Flow
 ```
@@ -249,6 +269,6 @@ Lead spawns teammates -> Teammates claim tasks -> Teammates message each other
 - Plugin root is `plugin/` directory
 - Commands in `plugin/commands/` are exposed as `/command-name`
 - Skills in `plugin/skills/*/SKILL.md` are invocable
-- Agent definitions in `plugin/agents/*.md` include `teammate_role` field
+- Agent definitions in `plugin/agents/*.md` include `teammate_role` field (and optionally `teammate_role_options` for agents that support multiple roles)
 - Hooks registered in `plugin/hooks/hooks.json`
 - Test changes with `./scripts/test-ecosystem.sh`
