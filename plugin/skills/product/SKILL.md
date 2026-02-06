@@ -7,6 +7,8 @@ description: Use when validating designs match product goals, or understanding w
 
 Invoke the Product Agent.
 
+> **Teammates:** When running as a teammate in an agent team, this skill uses inter-agent messaging instead of Task() subagent spawning. The Orchestrator (team lead) spawns you and you communicate results via messages.
+
 <CRITICAL_BOUNDARY>
 Product Agent operates at the documentation layer. Direct source code access produces invalid analysis.
 </CRITICAL_BOUNDARY>
@@ -16,8 +18,8 @@ BLOCKED_TOOLS: Glob, Grep, Read (for src/**, lib/**, *.ts, *.py, *.js, *.go, *.r
 ALLOWED_TOOLS: Glob, Read (for docs/** only), WebSearch, WebFetch
 
 Before ANY Glob/Grep/Read call, check if path matches src/**, lib/**, *.ts, *.py, *.js, *.go, etc.
-If yes, STOP and delegate to spelunker instead:
-Task(subagent_type: "agent-ecosystem:coding", prompt: "/code spelunk --for=product --focus='<area>'")
+If yes, STOP and delegate to Coding teammate via messaging:
+Message Coding teammate: "Need spelunk: /code spelunk --for=product --focus='<area>'"
 
 Any source file reads will produce INVALID analysis.
 </ACTIVE_BOUNDARY>
@@ -27,21 +29,20 @@ Any source file reads will produce INVALID analysis.
 If invoked without a subcommand OR with a free-form exploration request:
 
 1. **Detect intent** from the prompt:
-   - Keywords `spec`, `gherkin`, `feature spec`, `behavior spec`, `BDD` → route to `/product spec` workflow
-   - Keywords `brief`, `PRD`, `requirements` → route to `/product brief` workflow
-   - Keywords `validate`, `design review`, `check design` → route to `/product validate` workflow
-   - Keywords `discover`, `examine`, `analyze codebase`, `product violations`, `user flows`, `what does the code do`, `state of the codebase` → route to `/product examine` workflow
+   - Keywords `spec`, `gherkin`, `feature spec`, `behavior spec`, `BDD` -> route to `/product spec` workflow
+   - Keywords `brief`, `PRD`, `requirements` -> route to `/product brief` workflow
+   - Keywords `validate`, `design review`, `check design` -> route to `/product validate` workflow
+   - Keywords `discover`, `examine`, `analyze codebase`, `product violations`, `user flows`, `what does the code do`, `state of the codebase` -> route to `/product examine` workflow
 
 2. **Route to the appropriate subcommand workflow** - do NOT attempt direct execution
 
-3. **Default fallback:** If intent unclear and codebase context is needed → `/product examine`
+3. **Default fallback:** If intent unclear and codebase context is needed -> `/product examine`
 
 <ENFORCEMENT>
 **NEVER** attempt direct codebase exploration with Glob/Grep/Read on source files.
-**NEVER** use `Task(subagent_type: "Explore")` - documentation-layer agents must use spelunk.
-**ALWAYS** route through a subcommand workflow which enforces proper delegation.
+**ALWAYS** route through a subcommand workflow which enforces proper delegation via teammate messaging.
 
-Source file access is a boundary violation. Delegate immediately.
+Source file access is a boundary violation. Delegate via message immediately.
 </ENFORCEMENT>
 
 ## Subcommands
@@ -52,9 +53,6 @@ Write a Gherkin feature spec for upcoming features. Feature specs define behavio
 **Workflow:**
 ```
 Step 1: Gather requirements from user conversation
-        - What feature/capability?
-        - Who are the users?
-        - What outcomes do they expect?
 
 Step 2: Identify user personas and their goals
 
@@ -79,14 +77,13 @@ Step 4: Write spec to docs/specs/features/<feature-name>.feature
         ```
 
 Step 5: GATE - Spec Review (mandatory)
-        Task(
-          subagent_type: "agent-ecosystem:qa",
-          prompt: "Review feature spec: docs/specs/features/<feature-name>.feature"
-        )
+        Message QA teammate: "Review feature spec:
+        docs/specs/features/<feature-name>.feature
+        Check for completeness, testability, and edge case coverage."
 
-Step 6: If QA requests changes → iterate on spec (go to Step 3)
+Step 6: If QA requests changes -> iterate on spec (go to Step 3)
 
-Step 7: If QA approves → inform user spec is ready for /architect
+Step 7: If QA approves -> message lead: "Spec approved. Ready for /architect."
 ```
 
 **Output:** Feature spec at `docs/specs/features/<feature-name>.feature`
@@ -98,6 +95,7 @@ Draft a product brief (PRD) for a feature.
 1. Gather requirements from conversation
 2. Use web search for market research
 3. Write brief to `docs/plans/product/briefs/<feature-name>.md`
+4. Message lead: "Product brief complete at [path]"
 
 ### `/product validate`
 Validate an architect design against product expectations.
@@ -106,6 +104,9 @@ Validate an architect design against product expectations.
 1. Read design from `docs/plans/architect/<feature-name>.md`
 2. Check for existing brief in `docs/plans/product/briefs/<feature-name>.md`
 3. Write validation report to `docs/plans/product/validations/<feature-name>.md`
+4. Message Architect teammate: "Design validation complete.
+   Status: APPROVED / NEEDS_REVISION
+   Report: docs/plans/product/validations/<feature-name>.md"
 
 ### `/product examine`
 Analyze codebase from pure product lens (ignores code quality).
@@ -114,17 +115,18 @@ Analyze codebase from pure product lens (ignores code quality).
 ```
 Step 1: Parse focus area from user request
 
-Step 2: ALWAYS delegate (unconditional) - no exceptions, no checks for existing docs:
-        Task(
-          subagent_type: "agent-ecosystem:coding",
-          prompt: "/code spelunk --for=product --focus='<area>'"
-        )
+Step 2: ALWAYS delegate via message (unconditional):
+        Message Coding teammate: "Need spelunk for product analysis.
+        Run: /code spelunk --for=product --focus='<area>'
+        Report back when docs are ready at docs/spelunk/flows/"
 
-Step 3: WAIT for delegation to complete
+Step 3: WAIT for Coding teammate to message back
 
 Step 4: Read from docs/spelunk/flows/
 
 Step 5: Synthesize product analysis from spelunk output
+
+Step 6: Message lead with analysis summary
 ```
 
 ## Usage Examples
@@ -141,8 +143,8 @@ Step 5: Synthesize product analysis from spelunk output
 
 1. Product Agent activates
 2. Based on subcommand:
-   - **spec**: Writes Gherkin feature spec, spawns QA for review
+   - **spec**: Writes Gherkin feature spec, messages QA teammate for review
    - **brief**: Drafts PRD with market research to `docs/plans/product/briefs/`
-   - **validate**: Reviews design, writes report to `docs/plans/product/validations/`
-   - **examine**: Delegates to spelunker, then analyzes spelunk output for user value and gaps
+   - **validate**: Reviews design, messages Architect teammate with result
+   - **examine**: Delegates to Coding teammate via message, then analyzes spelunk output
 3. Outputs structured files (`.feature` specs or `.md` documents)
