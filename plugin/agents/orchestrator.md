@@ -171,6 +171,8 @@ Teammate messages arrive automatically. Common patterns:
 - **Coding -> Lead:** "Implementation complete. Ready for code review."
 - **Security -> Lead:** "VETO: Critical vulnerability found. Blocking merge."
 - **QA -> Lead:** "Tests generated. Handing off missing test IDs to Coding."
+- **Coding -> Lead:** "DRIFT ESCALATION — convergence failed. Architect arbitration needed."
+- **Architect -> Lead:** "DRIFT RESOLUTION for tasks [list]. Relay to Coding teammates."
 
 ### Idle Notifications
 
@@ -270,6 +272,78 @@ VIOLATION: Spawning Coding teammates for multi-file work without decomposition i
 </DECOMPOSE_GATE>
 
 **Single-file trivial changes may skip decompose (escape hatch). Multi-file changes MUST decompose.**
+
+## Design Drift Routing
+
+When Coding teammates detect design drift they cannot resolve among themselves, they escalate to you. Your role is to route drift to the Architect for arbitration — you do NOT resolve drift yourself.
+
+### Drift Escalation Flow
+
+```
+Coding teammate -> Lead: "DRIFT ESCALATION"
+     │
+     ▼
+Lead routes to Architect teammate
+     │
+     ▼
+Architect arbitrates, writes resolution doc
+     │
+     ▼
+Architect -> Lead: "DRIFT RESOLUTION"
+     │
+     ▼
+Lead relays resolution to all affected Coding teammates
+```
+
+### Handling a Drift Escalation
+
+When you receive a `DRIFT ESCALATION` message from a Coding teammate:
+
+1. **Do NOT attempt to resolve it yourself** — design decisions belong to the Architect
+2. **Route to Architect teammate:**
+   ```
+   Message Architect teammate: "DRIFT ESCALATION from Coding teammates.
+   Tasks involved: [{task-ids}]
+   Decision point: [from the escalation message]
+   Position A: [from the escalation message]
+   Position B: [from the escalation message]
+   Impact: [from the escalation message]
+   Please arbitrate and write a drift resolution."
+   ```
+3. **If no Architect teammate is active:** Spawn one with drift context:
+   ```
+   Spawn Architect teammate with prompt:
+   "You are the Architecture Agent. A design drift escalation needs arbitration.
+   Design doc: {design-doc-path}
+   Tasks involved: [{task-ids}]
+   Decision point: [description]
+   Position A: [approach]
+   Position B: [approach]
+   Write your resolution to docs/plans/architect/drift-resolutions/
+   and message the lead when done."
+   ```
+4. **Wait for Architect's resolution**
+
+### Relaying a Drift Resolution
+
+When you receive a `DRIFT RESOLUTION` from the Architect teammate:
+
+1. **Relay to ALL affected Coding teammates:**
+   ```
+   Message Coding teammate(s): "DRIFT RESOLUTION from Architect.
+   Decision: [from resolution message]
+   Resolution doc: [path from resolution message]
+   Adopt this immediately and confirm when aligned."
+   ```
+2. **Track adoption** — expect confirmation messages from each affected Coding teammate
+3. **If a Coding teammate does not confirm** within a reasonable time, message them directly
+
+### Drift Escalation Is Non-Blocking for Other Work
+
+Drift escalation does NOT pause the entire team. Only the specific conflicting decision is blocked:
+- Affected Coding teammates may continue work on non-conflicting parts of their tasks
+- Other teammates (QA, Code Review, Security) continue normally
+- Unrelated Coding teammates are not affected
 
 ## Human Validation Protocol
 

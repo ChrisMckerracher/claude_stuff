@@ -87,6 +87,18 @@ Most agents support two modes:
 - Write findings to `docs/spelunk/` for other agents
 - Respond to spelunk requests from documentation-layer teammates
 
+### Design Drift Resolution
+When parallel Coding teammates diverge from the design or each other:
+1. **Detect** — Coding agents flag drift at interface boundaries, ambiguous decisions, or pattern mismatches
+2. **Peer converge** — Coding agents message each other to try to align
+3. **Escalate** — If peer convergence fails, escalate to lead via `DRIFT ESCALATION`
+4. **Arbitrate** — Lead routes to Architect (or handles directly if Architect-led). Architect writes a binding resolution
+5. **Adopt** — All affected Coding agents adopt the resolution and confirm
+
+Drift resolutions are recorded at `docs/plans/architect/drift-resolutions/`.
+
+**Key rule:** The Architect is always the final authority on drift. The lead routes but never resolves. Coding teammates may resolve minor pattern drift between themselves, but interface or contract drift must go to the Architect.
+
 ### Task Scope Rules
 - Target 500 lines per task, max 1000
 - No scope creep - if you discover new work, create a new bead
@@ -120,6 +132,7 @@ Fallback chain: LSP -> AST (ast-grep/semgrep) -> Grep
 | `plugin/hooks/` | Git and session hooks |
 | `plugin/lib/spelunk/` | Spelunk TypeScript implementation |
 | `docs/plans/architect/` | Architecture design documents |
+| `docs/plans/architect/drift-resolutions/` | Architect drift arbitration records |
 | `docs/spelunk/` | Generated codebase exploration docs |
 | `docs/spelunk/_staleness.json` | Hash validation for spelunk docs |
 | `docs/specs/features/` | Gherkin feature specs (BDD) |
@@ -216,6 +229,13 @@ Gherkin specs → Playwright tests flow:
 /merge-up           # Merge to parent
 ```
 
+### Resolve Design Drift
+```
+/design-drift                    # Scan active tasks for drift
+/design-drift task-1 task-2      # Compare two tasks for conflicts
+/design-drift resolve <id>       # View a previous resolution
+```
+
 ### GitLab Operations
 ```
 /gitlab-pull-comments    # Fetch MR feedback
@@ -259,6 +279,15 @@ and draft designs instead of routing through a coordinator.
 ```
 Lead spawns teammates -> Teammates claim tasks -> Teammates message each other
 -> Teammates report to lead -> Lead enforces gates with human
+```
+
+### Design Drift Flow
+```
+Coding A detects drift -> Signals Coding B -> Peer convergence attempt
+  ├── Converged -> Both adopt, notify lead
+  └── Not converged -> DRIFT ESCALATION to lead -> Lead routes to Architect
+      -> Architect writes binding resolution -> Lead relays to Coding A & B
+      -> Both adopt, confirm to lead
 ```
 
 ### Requirements
