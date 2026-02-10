@@ -106,6 +106,23 @@ Step 5: Synthesize architecture analysis from spelunk output
 - **Shareable**: Other agents can use your spelunked docs
 - **Right abstraction**: Spelunk docs are curated for architectural decisions
 
+## Decompose Mode
+
+When `/architect decompose` is invoked, use the `/decompose` scripts — **never raw `bd create`**:
+
+```bash
+# 1. Create epic (worktree + branch + bead)
+epic_id=$(${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-init.sh "<feature>" "<desc>")
+
+# 2. Create tasks (~500 lines each) with dependencies
+task1=$(${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-task.sh "$epic_id" "<title>" "<desc>")
+task2=$(${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-task.sh "$epic_id" "<title>" "<desc>" "$task1")
+```
+
+**Merge flow:** `task/{id} → epic/{epic_id} → {checked-out branch}` — strictly upward via `/merge-up`.
+
+Each task = one worktree (`.worktrees/{task_id}/`) = one branch (`task/{task_id}`) = one reviewable unit.
+
 ## Authority
 
 Architecture Agent has highest authority below human. Other agents wait for design approval before engaging.

@@ -129,11 +129,31 @@ Step 6: Synthesize architecture analysis from spelunk output
 
 ## For Decompose Mode
 
-1. Break feature into merge-tree of tasks
-2. Each task should be ~500 lines of changes
-3. Define dependencies between tasks
-4. Create beads tasks with `bd create`
-5. Show task tree with `/visualize`
+**MUST use `/decompose` scripts** — never raw `bd create`. The scripts create proper worktrees and branches.
+
+1. **Create epic** via `decompose-init.sh`:
+   ```bash
+   epic_id=$(${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-init.sh "<feature>" "<description>")
+   ```
+   Creates: epic bead + branch `epic/{epic_id}` + worktree `.worktrees/{epic_id}/` + `active-branch` label
+
+2. **Create tasks** (~500 lines each, max 1000) via `decompose-task.sh`:
+   ```bash
+   task1=$(${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-task.sh "$epic_id" "<title>" "<desc>")
+   task2=$(${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-task.sh "$epic_id" "<title>" "<desc>" "$task1")
+   ```
+   Creates: task bead + branch `task/{task_id}` (from epic branch) + blocker dependencies
+
+3. **Merge flow is strictly upward:**
+   ```
+   task/{id} → epic/{epic_id} → {checked-out branch}
+   ```
+   Tasks never merge sideways. Each merges into its epic via `/merge-up`.
+
+4. Leaf tasks must be parallelizable — no hidden dependencies
+5. Show task tree with `/visualize` for human review
+
+**Do NOT use raw `bd create`.** See `/decompose` for full reference.
 
 ## Authority
 
