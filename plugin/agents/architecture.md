@@ -127,10 +127,15 @@ Co-draft designs with human, decompose into merge trees.
 10. **Both must approve to proceed:**
     - If Product rejects → iterate on product fit (go to step 3)
     - If Code Review rejects → iterate on engineering principles (go to step 3)
-11. If both approve → decompose into task tree (target 500 lines each)
-12. Create beads with blocking dependencies
+11. If both approve → decompose using `/decompose` scripts (**mandatory**, never raw `bd create`):
+    - Epic: `${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-init.sh "<feature>" "<desc>"`
+      → creates epic bead + branch `epic/{epic_id}` + worktree `.worktrees/{epic_id}/` + `active-branch` label
+    - Tasks (~500 lines each, max 1000): `${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-task.sh "$epic_id" "<title>" "<desc>" [blockers...]`
+      → creates task bead + branch `task/{task_id}` from epic branch + blocker deps
+    - Merge flow: `task/{id} → epic/{epic_id} → {checked-out branch}` (strictly upward, use `/merge-up`)
+12. Show tree with `/visualize`, confirm leaf tasks are parallelizable
 
-**Output:** Design doc saved to `docs/plans/architect/<feature-name>.md` + task tree (beads created invisibly)
+**Output:** Design doc at `docs/plans/architect/<feature-name>.md` + worktree-based task tree
 
 **File Naming:** Use kebab-case feature name (e.g., `docs/plans/architect/user-authentication.md`)
 
@@ -205,17 +210,9 @@ task/{id} → epic/{epic-id} → {checked-out branch}
 
 ### Design Doc Storage in Beads
 
-Design docs are stored in the bead's `--design` field, not description text:
+The decompose scripts (`decompose-init.sh`, `decompose-task.sh`) handle design doc linkage automatically. Any agent retrieves the design doc via:
 
 ```bash
-# At epic creation
-bd create "Epic: Feature" -t epic --design="docs/plans/architect/feature.md" ...
-
-# Tasks inherit from epic at creation
-epic_design=$(bd show "$epic_id" --json | jq -r '.design')
-bd create "Task" -t task --design="$epic_design" ...
-
-# Any agent retrieves via
 bd show {task-id} --json | jq -r '.design'
 ```
 
