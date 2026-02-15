@@ -937,7 +937,7 @@ Agent produces this manifest for `create` command:
 All mechanical operations are handled by the bash script:
 
 ```bash
-${CLAUDE_PLUGIN_ROOT}/plugin/scripts/gitlab-stack.sh <command> <stack-name> [options]
+${CLAUDE_PLUGIN_ROOT}/scripts/gitlab-stack.sh <command> <stack-name> [options]
 ```
 
 **Key principle:** Agent thinks, script acts. File contents are NEVER touched by agent tools.

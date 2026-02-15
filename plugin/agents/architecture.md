@@ -128,9 +128,9 @@ Co-draft designs with human, decompose into merge trees.
     - If Product rejects → iterate on product fit (go to step 3)
     - If Code Review rejects → iterate on engineering principles (go to step 3)
 11. If both approve → decompose using `/decompose` scripts (**mandatory**, never raw `bd create`):
-    - Epic: `${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-init.sh "<feature>" "<desc>"`
+    - Epic: `${CLAUDE_PLUGIN_ROOT}/scripts/decompose-init.sh "<feature>" "<desc>"`
       → creates epic bead + branch `epic/{epic_id}` + worktree `.worktrees/{epic_id}/` + `active-branch` label
-    - Tasks (~500 lines each, max 1000): `${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-task.sh "$epic_id" "<title>" "<desc>" [blockers...]`
+    - Tasks (~500 lines each, max 1000): `${CLAUDE_PLUGIN_ROOT}/scripts/decompose-task.sh "$epic_id" "<title>" "<desc>" [blockers...]`
       → creates task bead + branch `task/{task_id}` from epic branch + blocker deps
     - Merge flow: `task/{id} → epic/{epic_id} → {checked-out branch}` (strictly upward, use `/merge-up`)
 12. Show tree with `/visualize`, confirm leaf tasks are parallelizable

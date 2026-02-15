@@ -37,7 +37,7 @@ Break the given feature into a merge tree of tasks with proper git worktrees and
 
 ```bash
 # Creates epic bead + epic branch + worktree at .worktrees/{epic_id}/
-epic_id=$(${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-init.sh "Feature Name" "Feature description from design doc")
+epic_id=$(${CLAUDE_PLUGIN_ROOT}/scripts/decompose-init.sh "Feature Name" "Feature description from design doc")
 ```
 
 This creates:
@@ -50,13 +50,13 @@ This creates:
 
 ```bash
 # Create first task (no blockers)
-task1=$(${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-task.sh "$epic_id" "Task 1 title" "Task 1 description")
+task1=$(${CLAUDE_PLUGIN_ROOT}/scripts/decompose-task.sh "$epic_id" "Task 1 title" "Task 1 description")
 
 # Create task blocked by task1
-task2=$(${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-task.sh "$epic_id" "Task 2 title" "Task 2 description" "$task1")
+task2=$(${CLAUDE_PLUGIN_ROOT}/scripts/decompose-task.sh "$epic_id" "Task 2 title" "Task 2 description" "$task1")
 
 # Create task blocked by multiple tasks
-task3=$(${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-task.sh "$epic_id" "Task 3 title" "Task 3 description" "$task1" "$task2")
+task3=$(${CLAUDE_PLUGIN_ROOT}/scripts/decompose-task.sh "$epic_id" "Task 3 title" "Task 3 description" "$task1" "$task2")
 ```
 
 Each task creates:
@@ -69,16 +69,16 @@ Each task creates:
 
 ```bash
 # 1. Create epic
-epic_id=$(${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-init.sh "Feature Name" "Feature description from design doc")
+epic_id=$(${CLAUDE_PLUGIN_ROOT}/scripts/decompose-init.sh "Feature Name" "Feature description from design doc")
 
 # 2. Create first task (no blockers)
-task1=$(${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-task.sh "$epic_id" "Task 1 title" "Task 1 description")
+task1=$(${CLAUDE_PLUGIN_ROOT}/scripts/decompose-task.sh "$epic_id" "Task 1 title" "Task 1 description")
 
 # 3. Create task blocked by task1
-task2=$(${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-task.sh "$epic_id" "Task 2 title" "Task 2 description" "$task1")
+task2=$(${CLAUDE_PLUGIN_ROOT}/scripts/decompose-task.sh "$epic_id" "Task 2 title" "Task 2 description" "$task1")
 
 # 4. Create task blocked by multiple tasks
-task3=$(${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-task.sh "$epic_id" "Task 3 title" "Task 3 description" "$task1" "$task2")
+task3=$(${CLAUDE_PLUGIN_ROOT}/scripts/decompose-task.sh "$epic_id" "Task 3 title" "Task 3 description" "$task1" "$task2")
 
 # 5. Show the tree
 echo "Epic: $epic_id"

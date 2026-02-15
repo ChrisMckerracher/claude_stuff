@@ -133,14 +133,14 @@ Step 6: Synthesize architecture analysis from spelunk output
 
 1. **Create epic** via `decompose-init.sh`:
    ```bash
-   epic_id=$(${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-init.sh "<feature>" "<description>")
+   epic_id=$(${CLAUDE_PLUGIN_ROOT}/scripts/decompose-init.sh "<feature>" "<description>")
    ```
    Creates: epic bead + branch `epic/{epic_id}` + worktree `.worktrees/{epic_id}/` + `active-branch` label
 
 2. **Create tasks** (~500 lines each, max 1000) via `decompose-task.sh`:
    ```bash
-   task1=$(${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-task.sh "$epic_id" "<title>" "<desc>")
-   task2=$(${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-task.sh "$epic_id" "<title>" "<desc>" "$task1")
+   task1=$(${CLAUDE_PLUGIN_ROOT}/scripts/decompose-task.sh "$epic_id" "<title>" "<desc>")
+   task2=$(${CLAUDE_PLUGIN_ROOT}/scripts/decompose-task.sh "$epic_id" "<title>" "<desc>" "$task1")
    ```
    Creates: task bead + branch `task/{task_id}` (from epic branch) + blocker dependencies
 

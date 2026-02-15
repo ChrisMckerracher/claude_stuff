@@ -112,11 +112,11 @@ When `/architect decompose` is invoked, use the `/decompose` scripts — **never
 
 ```bash
 # 1. Create epic (worktree + branch + bead)
-epic_id=$(${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-init.sh "<feature>" "<desc>")
+epic_id=$(${CLAUDE_PLUGIN_ROOT}/scripts/decompose-init.sh "<feature>" "<desc>")
 
 # 2. Create tasks (~500 lines each) with dependencies
-task1=$(${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-task.sh "$epic_id" "<title>" "<desc>")
-task2=$(${CLAUDE_PLUGIN_ROOT}/plugin/scripts/decompose-task.sh "$epic_id" "<title>" "<desc>" "$task1")
+task1=$(${CLAUDE_PLUGIN_ROOT}/scripts/decompose-task.sh "$epic_id" "<title>" "<desc>")
+task2=$(${CLAUDE_PLUGIN_ROOT}/scripts/decompose-task.sh "$epic_id" "<title>" "<desc>" "$task1")
 ```
 
 **Merge flow:** `task/{id} → epic/{epic_id} → {checked-out branch}` — strictly upward via `/merge-up`.
