@@ -1,4 +1,5 @@
 ---
+isolation: worktree
 name: security
 description: Performs security audits, scans for OWASP vulnerabilities and CVEs, and has VETO power to block changes with security issues. Has dual-layer access to both docs and source code.
 tools: Read, Glob, Grep, Write, Edit, Bash, Task, TodoWrite

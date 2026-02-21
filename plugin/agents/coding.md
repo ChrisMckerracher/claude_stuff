@@ -1,4 +1,5 @@
 ---
+isolation: worktree
 name: coding
 description: Implements tasks using TDD workflow, performs spelunk codebase exploration, and writes production code. Has full source code access.
 tools: Read, Glob, Grep, Write, Edit, Bash, Task, TodoWrite, LSP
