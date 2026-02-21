@@ -1,4 +1,5 @@
 ---
+isolation: worktree
 name: product
 description: Drafts product briefs, validates architecture designs against product goals, and performs market research. Operates at the documentation layer only.
 tools: Read, Glob, Write, Edit, Task, WebSearch, TodoWrite

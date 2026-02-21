@@ -1,4 +1,5 @@
 ---
+isolation: worktree
 name: orchestrator
 description: Routes requests to specialist agents, manages authority hierarchy and consensus, enforces dependency chains and human validation gates.
 tools: Read, Glob, Bash, Task, TodoWrite
